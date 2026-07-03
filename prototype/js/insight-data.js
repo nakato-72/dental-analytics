@@ -34,44 +34,18 @@ function insightTrend(text, up) {
 }
 
 /**
- * 当月の全日分（1日〜月末）の日別売上データを生成する。
- * - 休診日（日曜）と本日以降の未来日は 0（バーなし・日付ラベルのみ）
- * - weight で医院/担当ごとの規模にスケール
- */
-function buildMonthlyDailyRevenue(weight = 1) {
-  const daysInMonth = 30;
-  const todayDay = 23;
-  const closedDays = new Set([1, 8, 15, 22, 29]); // 休診日（日曜）
-  const labels = [];
-  const insurance = [];
-  const selfPay = [];
-  const products = [];
-
-  for (let d = 1; d <= daysInMonth; d++) {
-    labels.push(`6/${d}`);
-    const isClosed = closedDays.has(d);
-    const isFuture = d > todayDay;
-    if (isClosed || isFuture) {
-      insurance.push(0);
-      selfPay.push(0);
-      products.push(0);
-      continue;
-    }
-    const insBase = 92000 + ((d * 37) % 28) * 1000;
-    const selfBase = 46000 + ((d * 19) % 22) * 1000;
-    const prodBase = 11000 + ((d * 7) % 9) * 1000;
-    insurance.push(Math.round(insBase * weight));
-    selfPay.push(Math.round(selfBase * weight));
-    products.push(Math.round(prodBase * weight));
-  }
-
-  return { labels, insurance, selfPay, products };
-}
-
-/**
- * 月別（1〜12月）を必ず出す。元データが 1〜6月しか無い場合は残りを0で埋める。
+ * 月別（1〜12月）を必ず出す。clinicOnly.chart を正本とし、なければ periodDetails から補完。
  */
 function buildYearMonthRevenue(detail, weight = 1) {
+  const clinicChart = MOCK_DATA.clinicOnly?.chart;
+  if (clinicChart?.labels?.length >= 12) {
+    return {
+      labels: Array.from({ length: 12 }, (_, i) => `${i + 1}月`),
+      insurance: clinicChart.insurance.map((v) => Math.round(v * weight)),
+      selfPay: clinicChart.selfPay.map((v) => Math.round(v * weight)),
+      products: clinicChart.products.map((v) => Math.round(v * weight)),
+    };
+  }
   const labels = Array.from({ length: 12 }, (_, i) => `${i + 1}月`);
   const idx = new Map((detail?.charts?.labels || []).map((l, i) => [String(l), i]));
   const pick = (arr, i) => (Array.isArray(arr) && arr[i] != null ? arr[i] : 0);
@@ -81,63 +55,67 @@ function buildYearMonthRevenue(detail, weight = 1) {
   return { labels, insurance, selfPay, products };
 }
 
-/** 合計売上を Dr / DH / 未設定に按分（職種別売上推移用） */
-const STAFF_SALES_ROLE_RATIOS = { dr: 0.633, dh: 0.307 };
-
-function splitStaffSalesTotal(total) {
-  const t = Math.max(0, Math.round(total));
-  const dr = Math.round(t * STAFF_SALES_ROLE_RATIOS.dr);
-  const dh = Math.round(t * STAFF_SALES_ROLE_RATIOS.dh);
-  const unset = Math.max(0, t - dr - dh);
-  return { dr, dh, unset };
+/** 当月全日の日別売上（今月累計と前日/本日の確定値から派生） */
+function buildMonthlyDailyRevenue(detail, period, metricsContext, weight = 1) {
+  const ctx = metricsContext || { entityKey: 'clinic-sakura', weight };
+  const monthDetail = typeof resolvePeriodDetail === 'function'
+    ? resolvePeriodDetail('今月', ctx)
+    : MOCK_DATA.periodDetails['今月'];
+  if (typeof buildMonthlyDailyRevenueFromDetails === 'function') {
+    return buildMonthlyDailyRevenueFromDetails(monthDetail, detail, weight);
+  }
+  return buildPeriodRevenueTrend(detail, weight);
 }
 
-function splitStaffSalesTotals(totals) {
-  const dr = [];
-  const dh = [];
-  const unset = [];
-  totals.forEach((total) => {
-    const part = splitStaffSalesTotal(total);
-    dr.push(part.dr);
-    dh.push(part.dh);
-    unset.push(part.unset);
-  });
-  return { dr, dh, unset };
-}
-
-/** 当月全日の日別職種別売上（休診日・未来日は0） */
-function buildMonthlyDailyStaffSales(weight = 1) {
-  const daily = buildMonthlyDailyRevenue(weight);
+/** 当月全日の日別職種別売上 */
+function buildMonthlyDailyStaffSales(detail, period, metricsContext, weight = 1) {
+  const ctx = metricsContext || { entityKey: 'clinic-sakura', weight };
+  const monthDetail = typeof resolvePeriodDetail === 'function'
+    ? resolvePeriodDetail('今月', ctx)
+    : MOCK_DATA.periodDetails['今月'];
+  if (typeof buildMonthlyDailyStaffSalesFromDetails === 'function') {
+    return buildMonthlyDailyStaffSalesFromDetails(monthDetail, detail, weight, {
+      entityKey: ctx.entityKey || 'clinic-sakura',
+    });
+  }
+  const daily = buildMonthlyDailyRevenue(detail, period, ctx, weight);
   const totals = daily.labels.map((_, i) =>
     (daily.insurance[i] || 0) + (daily.selfPay[i] || 0) + (daily.products[i] || 0),
   );
-  const split = splitStaffSalesTotals(totals);
+  const split = typeof splitStaffTotalsFromDetail === 'function'
+    ? splitStaffTotalsFromDetail(detail, ctx.entityKey, totals)
+    : splitStaffSalesTotals(totals);
   return { labels: daily.labels, ...split };
 }
 
 /** 月別（1〜12月）職種別売上 */
-function buildYearMonthStaffSales(detail, weight = 1) {
+function buildYearMonthStaffSales(detail, weight = 1, entityKey = 'clinic-sakura') {
   const ym = buildYearMonthRevenue(detail, weight);
   const totals = ym.labels.map((_, i) =>
     (ym.insurance[i] || 0) + (ym.selfPay[i] || 0) + (ym.products[i] || 0),
   );
-  const split = splitStaffSalesTotals(totals);
+  const split = typeof splitStaffTotalsFromDetail === 'function'
+    ? splitStaffTotalsFromDetail(detail, entityKey, totals)
+    : splitStaffSalesTotals(totals);
   return { labels: ym.labels, ...split };
 }
 
 /** 年別職種別売上 */
-function buildYearlyStaffSales(detail, weight = 1) {
+function buildYearlyStaffSales(detail, weight = 1, entityKey = 'clinic-sakura') {
   const labels = detail.charts?.labels || [];
   const totals = labels.map((_, i) => Math.round(
     ((detail.charts?.insurance?.[i] || 0)
       + (detail.charts?.selfPay?.[i] || 0)
       + (detail.charts?.products?.[i] || 0)) * weight,
   ));
-  const split = splitStaffSalesTotals(totals);
+  const split = typeof splitStaffTotalsFromDetail === 'function'
+    ? splitStaffTotalsFromDetail(detail, entityKey, totals)
+    : splitStaffSalesTotals(totals);
   return { labels, ...split };
 }
 
-function buildStaffSalesTrendChart(period, detail, weight = 1) {
+function buildStaffSalesTrendChart(period, detail, weight = 1, metricsContext = null) {
+  const entityKey = metricsContext?.entityKey || 'clinic-sakura';
   const series = (data) => [
     { name: 'Dr', color: '#2563eb', values: data.dr },
     { name: 'DH', color: '#0891b2', values: data.dh },
@@ -145,7 +123,7 @@ function buildStaffSalesTrendChart(period, detail, weight = 1) {
   ];
 
   if (period === '今年') {
-    const yearly = buildYearlyStaffSales(detail, weight);
+    const yearly = buildYearlyStaffSales(detail, weight, entityKey);
     return {
       title: '年別売上推移',
       subtitle: '年別（Dr / DH / 未設定）',
@@ -157,7 +135,7 @@ function buildStaffSalesTrendChart(period, detail, weight = 1) {
   }
 
   if (period === '今月') {
-    const monthly = buildYearMonthStaffSales(detail, weight);
+    const monthly = buildYearMonthStaffSales(detail, weight, entityKey);
     return {
       title: '月別売上推移',
       subtitle: '1〜12月（Dr / DH / 未設定）',
@@ -168,102 +146,50 @@ function buildStaffSalesTrendChart(period, detail, weight = 1) {
     };
   }
 
-  const daily = buildMonthlyDailyStaffSales(weight);
+  const daily = buildMonthlyDailyStaffSales(detail, period, metricsContext, weight);
   return {
     title: '日別売上推移',
     subtitle: '当月の全日（Dr / DH / 未設定）',
     type: 'stacked-bar',
     valueFormat: 'yen',
     denseLabels: true,
+    denseLabels: true,
     labels: daily.labels,
     series: series(daily),
   };
 }
 
-/** 予約件数をステータス別に按分 */
-function splitAppointmentStatus(total) {
-  const t = Math.max(0, Math.round(total));
-  const visited = Math.round(t * 0.853);
-  const pending = Math.round(t * 0.059);
-  const cancel = Math.round(t * 0.059);
-  const noShow = Math.max(0, t - visited - pending - cancel);
-  return { visited, pending, cancel, noShow };
-}
-
-function splitAppointmentStatusSeries(totals) {
-  const visited = [];
-  const pending = [];
-  const cancel = [];
-  const noShow = [];
-  totals.forEach((total) => {
-    const part = splitAppointmentStatus(total);
-    visited.push(part.visited);
-    pending.push(part.pending);
-    cancel.push(part.cancel);
-    noShow.push(part.noShow);
-  });
-  return { visited, pending, cancel, noShow };
-}
-
-/** 当月全日の日別予約ステータス（休診日・未来日は0） */
-function buildMonthlyDailyAppointments(weight = 1) {
-  const daysInMonth = 30;
-  const todayDay = 23;
-  const closedDays = new Set([1, 8, 15, 22, 29]);
-  const labels = [];
-  const totals = [];
-
-  for (let d = 1; d <= daysInMonth; d++) {
-    labels.push(`6/${d}`);
-    const isClosed = closedDays.has(d);
-    const isFuture = d > todayDay;
-    if (isClosed || isFuture) {
-      totals.push(0);
-      continue;
-    }
-    const base = 28 + ((d * 13) % 11) + 4;
-    totals.push(Math.max(0, Math.round(base * weight)));
+/** 当月全日の日別予約ステータス（患者数・予約内訳から派生） */
+function buildMonthlyDailyAppointments(detail, metricsContext, weight = 1) {
+  const ctx = metricsContext || { entityKey: 'clinic-sakura', weight };
+  const monthDetail = typeof resolvePeriodDetail === 'function'
+    ? resolvePeriodDetail('今月', ctx)
+    : MOCK_DATA.periodDetails['今月'];
+  if (typeof buildMonthlyDailyAppointmentsFromDetails === 'function') {
+    return buildMonthlyDailyAppointmentsFromDetails(monthDetail, detail, weight);
   }
-
-  const split = splitAppointmentStatusSeries(totals);
-  return { labels, ...split };
+  return { labels: [], visited: [], notVisited: [], cancelled: [], noShow: [] };
 }
 
-/** 月別（1〜12月）予約ステータス */
 function buildYearMonthAppointments(detail, weight = 1) {
-  const labels = Array.from({ length: 12 }, (_, i) => `${i + 1}月`);
-  const idx = new Map((detail?.charts?.labels || []).map((l, i) => [String(l), i]));
-  const pick = (arr, label) => {
-    const i = idx.get(label);
-    return i != null && Array.isArray(arr) ? arr[i] : null;
-  };
-
-  const totals = labels.map((m, i) => {
-    const visits = pick(detail?.charts?.visits, m);
-    if (visits != null) return Math.max(0, Math.round(visits * 1.12 * weight));
-    return Math.max(0, Math.round((780 + i * 28) * weight));
-  });
-
-  const split = splitAppointmentStatusSeries(totals);
-  return { labels, ...split };
+  if (typeof buildYearMonthAppointmentsFromDetails === 'function') {
+    return buildYearMonthAppointmentsFromDetails(detail, weight);
+  }
+  return { labels: [], visited: [], notVisited: [], cancelled: [], noShow: [] };
 }
 
-/** 年別予約ステータス */
 function buildYearlyAppointments(detail, weight = 1) {
-  const labels = detail.charts?.labels || [];
-  const totals = labels.map((_, i) => {
-    const visits = detail.charts?.visits?.[i] || 0;
-    return Math.max(0, Math.round(visits * 1.12 * weight));
-  });
-  const split = splitAppointmentStatusSeries(totals);
-  return { labels, ...split };
+  if (typeof buildYearlyAppointmentsFromDetails === 'function') {
+    return buildYearlyAppointmentsFromDetails(detail, weight);
+  }
+  return { labels: [], visited: [], notVisited: [], cancelled: [], noShow: [] };
 }
 
-function buildAppointmentStatusTrendChart(period, detail, weight = 1) {
+function buildAppointmentStatusTrendChart(period, detail, weight = 1, metricsContext = null) {
   const series = (data) => [
     { name: '来院済', color: '#10b981', values: data.visited },
-    { name: '未来院', color: '#0ea5e9', values: data.pending },
-    { name: 'CX', color: '#f59e0b', values: data.cancel },
+    { name: '未来院', color: '#0ea5e9', values: data.notVisited ?? data.pending },
+    { name: 'CX', color: '#f59e0b', values: data.cancelled ?? data.cancel },
     { name: '無断', color: '#ef4444', values: data.noShow },
   ];
 
@@ -289,7 +215,7 @@ function buildAppointmentStatusTrendChart(period, detail, weight = 1) {
     };
   }
 
-  const daily = buildMonthlyDailyAppointments(weight);
+  const daily = buildMonthlyDailyAppointments(detail, metricsContext, weight);
   return {
     title: '予約ステータス推移',
     subtitle: '当月の全日（来院済 / 未来院 / CX / 無断）',
@@ -301,6 +227,10 @@ function buildAppointmentStatusTrendChart(period, detail, weight = 1) {
 }
 
 function pickVisitBreakdownAt(detail, i) {
+  const total = detail?.charts?.visits?.[i] ?? 0;
+  if (typeof buildVisitBreakdownAtTotal === 'function') {
+    return buildVisitBreakdownAtTotal(detail, total, 1);
+  }
   const firstVal = detail?.charts?.visitsFirst?.[i] ?? 0;
   return {
     pureFirst: Math.max(0, Math.round(firstVal * 0.25)),
@@ -310,52 +240,15 @@ function pickVisitBreakdownAt(detail, i) {
   };
 }
 
-function splitVisitType(total) {
-  const t = Math.max(0, Math.round(total));
-  const pureFirst = Math.max(0, Math.round(t * 0.07));
-  const first = Math.max(0, Math.round(t * 0.21));
-  const ret = Math.max(0, Math.round(t * 0.59));
-  const other = Math.max(0, t - pureFirst - first - ret);
-  return { pureFirst, first, return: ret, other };
-}
-
-function splitVisitTypeSeries(totals) {
-  const pureFirst = [];
-  const first = [];
-  const returnV = [];
-  const other = [];
-  totals.forEach((total) => {
-    const part = splitVisitType(total);
-    pureFirst.push(part.pureFirst);
-    first.push(part.first);
-    returnV.push(part.return);
-    other.push(part.other);
-  });
-  return { pureFirst, first, return: returnV, other };
-}
-
-/** 当月全日の日別来院内訳（休診日・未来日は0） */
-function buildMonthlyDailyVisitBreakdown(weight = 1) {
-  const daysInMonth = 30;
-  const todayDay = 23;
-  const closedDays = new Set([1, 8, 15, 22, 29]);
-  const labels = [];
-  const totals = [];
-
-  for (let d = 1; d <= daysInMonth; d++) {
-    labels.push(`6/${d}`);
-    const isClosed = closedDays.has(d);
-    const isFuture = d > todayDay;
-    if (isClosed || isFuture) {
-      totals.push(0);
-      continue;
-    }
-    const base = 24 + ((d * 11) % 9) + 3;
-    totals.push(Math.max(0, Math.round(base * weight)));
+function buildMonthlyDailyVisitBreakdown(detail, metricsContext, weight = 1) {
+  const ctx = metricsContext || { entityKey: 'clinic-sakura', weight };
+  const monthDetail = typeof resolvePeriodDetail === 'function'
+    ? resolvePeriodDetail('今月', ctx)
+    : MOCK_DATA.periodDetails['今月'];
+  if (typeof buildMonthlyDailyVisitBreakdownFromDetails === 'function') {
+    return buildMonthlyDailyVisitBreakdownFromDetails(monthDetail, detail, weight);
   }
-
-  const split = splitVisitTypeSeries(totals);
-  return { labels, ...split };
+  return { labels: [], pureFirst: [], first: [], return: [], other: [] };
 }
 
 /** 月別（1〜12月）来院内訳 */
@@ -377,7 +270,9 @@ function buildYearMonthVisitBreakdown(detail, weight = 1) {
       other.push(Math.max(0, Math.round(part.other * weight)));
       return;
     }
-    const part = splitVisitType(Math.max(0, Math.round((680 + i * 24) * weight)));
+    const part = typeof buildVisitBreakdownAtTotal === 'function'
+      ? buildVisitBreakdownAtTotal(detail, Math.max(0, Math.round((680 + i * 24) * weight)), weight)
+      : { pureFirst: 0, first: 0, return: 0, other: 0 };
     pureFirst.push(part.pureFirst);
     first.push(part.first);
     returnV.push(part.return);
@@ -406,7 +301,7 @@ function buildYearlyVisitBreakdown(detail, weight = 1) {
   return { labels, pureFirst, first, return: returnV, other };
 }
 
-function buildVisitBreakdownTrendChart(period, detail, weight = 1) {
+function buildVisitBreakdownTrendChart(period, detail, weight = 1, metricsContext = null) {
   const series = (data) => [
     { name: '純初診', color: '#6366f1', values: data.pureFirst },
     { name: '初診', color: '#8b5cf6', values: data.first },
@@ -436,7 +331,7 @@ function buildVisitBreakdownTrendChart(period, detail, weight = 1) {
     };
   }
 
-  const daily = buildMonthlyDailyVisitBreakdown(weight);
+  const daily = buildMonthlyDailyVisitBreakdown(detail, metricsContext, weight);
   return {
     title: '来院内訳推移',
     subtitle: '当月の全日（純初診 / 初診 / 再診 / その他）',
@@ -484,30 +379,66 @@ function buildStaffRoleRanking(items, total) {
   return scaled;
 }
 
-function buildDrSalesRankingChart(drTotal) {
+function buildDrSalesRankingChart(detail, entityKey = 'clinic-sakura') {
+  const chart = typeof getReconciledStaffSalesChart === 'function'
+    ? getReconciledStaffSalesChart(detail, entityKey)
+    : null;
+  const colors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'];
+  const items = chart
+    ? chart.labels
+      .map((label, i) => ({
+        label: typeof mapStaffChartLabelToName === 'function'
+          ? mapStaffChartLabelToName(label)
+          : label,
+        value: (chart.insurance[i] || 0) + (chart.selfPay[i] || 0),
+        role: typeof staffChartRowRole === 'function' ? staffChartRowRole(label) : 'dr',
+      }))
+      .filter((r) => r.role === 'dr')
+      .map((r, i) => ({ label: r.label, value: r.value, color: colors[i % colors.length] }))
+    : buildStaffRoleRanking([
+      { label: '田中 健一', weight: 90400, color: '#2563eb' },
+      { label: '佐藤 誠', weight: 52400, color: '#3b82f6' },
+    ], typeof getStaffSalesBreakdown === 'function'
+      ? getStaffSalesBreakdown(detail, entityKey).dr
+      : splitStaffSalesTotal(detail.total).dr);
   return {
     title: 'Dr別売上ランキング',
     subtitle: '生産性の偏りを確認',
     type: 'hbar',
     valueFormat: 'yen',
-    items: buildStaffRoleRanking([
-      { label: '田中 健一', weight: 90400, color: '#2563eb' },
-      { label: '佐藤 誠', weight: 52400, color: '#3b82f6' },
-    ], drTotal),
+    items,
   };
 }
 
-function buildDhSalesRankingChart(dhTotal) {
+function buildDhSalesRankingChart(detail, entityKey = 'clinic-sakura') {
+  const chart = typeof getReconciledStaffSalesChart === 'function'
+    ? getReconciledStaffSalesChart(detail, entityKey)
+    : null;
+  const colors = ['#0891b2', '#06b6d4', '#14b8a6', '#2dd4bf'];
+  const items = chart
+    ? chart.labels
+      .map((label, i) => ({
+        label: typeof mapStaffChartLabelToName === 'function'
+          ? mapStaffChartLabelToName(label)
+          : label,
+        value: (chart.insurance[i] || 0) + (chart.selfPay[i] || 0),
+        role: typeof staffChartRowRole === 'function' ? staffChartRowRole(label) : 'dh',
+      }))
+      .filter((r) => r.role === 'dh')
+      .map((r, i) => ({ label: r.label, value: r.value, color: colors[i % colors.length] }))
+    : buildStaffRoleRanking([
+      { label: '鈴木 美咲', weight: 31000, color: '#0891b2' },
+      { label: '山田 恵', weight: 24000, color: '#06b6d4' },
+      { label: '伊藤 彩', weight: 20200, color: '#14b8a6' },
+    ], typeof getStaffSalesBreakdown === 'function'
+      ? getStaffSalesBreakdown(detail, entityKey).dh
+      : splitStaffSalesTotal(detail.total).dh);
   return {
     title: 'DH別売上ランキング',
     subtitle: '生産性の偏りを確認',
     type: 'hbar',
     valueFormat: 'yen',
-    items: buildStaffRoleRanking([
-      { label: '鈴木 美咲', weight: 31000, color: '#0891b2' },
-      { label: '山田 恵', weight: 24000, color: '#06b6d4' },
-      { label: '伊藤 彩', weight: 20200, color: '#14b8a6' },
-    ], dhTotal),
+    items,
   };
 }
 
@@ -522,20 +453,23 @@ function buildCompositeStackKpi(items, options = {}) {
   return { type: 'composite-stack', items };
 }
 
-const VISITING_INSIGHT_DEFAULTS = {
-  '本日': { total: 4, pureFirst: 1, first: 1, return: 1, other: 1, trend: insightTrend('-1名', false) },
-  '前日': { total: 3, pureFirst: 1, first: 1, return: 0, other: 1, trend: insightTrend('+1名', true) },
-  '今月': { total: 52, pureFirst: 12, first: 14, return: 18, other: 8, trend: insightTrend('+6名', true) },
-  '今年': { total: 286, pureFirst: 62, first: 78, return: 102, other: 44, trend: insightTrend('+24名', true) },
+const VISITING_TREND_META = {
+  '本日': insightTrend('-1名', false),
+  '前日': insightTrend('+1名', true),
+  '今月': insightTrend('+6名', true),
+  '今年': insightTrend('+24名', true),
 };
 
-function buildVisitingInsightKpi(period, weight, periodSub, size) {
-  const defaults = VISITING_INSIGHT_DEFAULTS[period] || VISITING_INSIGHT_DEFAULTS['本日'];
-  const scaled = scaleInsightCount(defaults.total, [
-    { label: '純初診', value: defaults.pureFirst, color: '#6366f1', rateMuted: true },
-    { label: '初診', value: defaults.first, color: '#8b5cf6', rateMuted: true },
-    { label: '再診', value: defaults.return, color: '#06b6d4', rateMuted: true },
-    { label: 'その他', value: defaults.other, color: '#94a3b8' },
+function buildVisitingInsightKpi(detail, period, weight, periodSub, size) {
+  const visiting = typeof getVisitingPatients === 'function'
+    ? getVisitingPatients(detail)
+    : { total: 0, breakdown: { pureFirst: 0, first: 0, return: 0, other: 0 } };
+  const b = visiting.breakdown;
+  const scaled = scaleInsightCount(visiting.total, [
+    { label: '純初診', value: b.pureFirst, color: '#6366f1', rateMuted: true },
+    { label: '初診', value: b.first, color: '#8b5cf6', rateMuted: true },
+    { label: '再診', value: b.return, color: '#06b6d4', rateMuted: true },
+    { label: 'その他', value: b.other, color: '#94a3b8' },
   ], weight);
   return buildCompositeKpi({
     accent: '#8b5cf6',
@@ -546,17 +480,16 @@ function buildVisitingInsightKpi(period, weight, periodSub, size) {
       value: scaled.total,
       unit: '人',
       sub: periodSub,
-      trend: defaults.trend,
+      trend: VISITING_TREND_META[period] || insightTrend('±0', null),
     },
     segments: scaled.segments,
   });
 }
 
 function buildOutpatientInsightKpi(detail, periodSub, size) {
-  const pure = Math.max(0, Math.round(detail.visits * 0.07));
-  const first = Math.max(0, Math.round(detail.visits * 0.21));
-  const ret = Math.max(0, Math.round(detail.visits * 0.59));
-  const other = Math.max(0, detail.visits - pure - first - ret);
+  const b = typeof getOutpatientBreakdown === 'function'
+    ? getOutpatientBreakdown(detail)
+    : { pureFirst: 0, first: 0, return: 0, other: 0 };
   return buildCompositeKpi({
     accent: '#06b6d4',
     size,
@@ -568,10 +501,10 @@ function buildOutpatientInsightKpi(detail, periodSub, size) {
       trend: insightTrend(detail.change?.text || '', detail.change?.up),
     },
     segments: [
-      { label: '純初診', value: pure, color: '#6366f1', rateMuted: true },
-      { label: '初診', value: first, color: '#8b5cf6', rateMuted: true },
-      { label: '再診', value: ret, color: '#06b6d4', rateMuted: true },
-      { label: 'その他', value: other, color: '#94a3b8' },
+      { label: '純初診', value: b.pureFirst, color: '#6366f1', rateMuted: true },
+      { label: '初診', value: b.first, color: '#8b5cf6', rateMuted: true },
+      { label: '再診', value: b.return, color: '#06b6d4', rateMuted: true },
+      { label: 'その他', value: b.other, color: '#94a3b8' },
     ],
   });
 }
@@ -725,6 +658,7 @@ function getInsightPageData(pageId, period = '本日', metricsContext = null) {
       return {
       kpis: buildCompositeKpi({
         accent: '#0ea5e9',
+        popoverPageId: 'unitPrice',
         total: {
           label: '売上合計',
           value: detail.total,
@@ -777,18 +711,18 @@ function getInsightPageData(pageId, period = '本日', metricsContext = null) {
           }
 
           // 前日/本日：当月の全日（日別）
-          const monthDaily = buildMonthlyDailyRevenue(w);
+          const periodDaily = buildMonthlyDailyRevenue(detail, period, metricsContext, w);
           return {
             title: '日別売上推移',
             subtitle: '当月の全日（保険・自費・販売品）',
             type: 'stacked-bar',
             valueFormat: 'yen',
             denseLabels: true,
-            labels: monthDaily.labels,
+            labels: periodDaily.labels,
             series: [
-              { name: '保険', color: '#22c55e', values: monthDaily.insurance },
-              { name: '自費', color: '#0ea5e9', values: monthDaily.selfPay },
-              { name: '販売品', color: '#eab308', values: monthDaily.products },
+              { name: '保険', color: '#22c55e', values: periodDaily.insurance },
+              { name: '自費', color: '#0ea5e9', values: periodDaily.selfPay },
+              { name: '販売品', color: '#eab308', values: periodDaily.products },
             ],
           };
         })(),
@@ -809,12 +743,41 @@ function getInsightPageData(pageId, period = '本日', metricsContext = null) {
     };
     },
     staffSales: () => {
-      const dr = Math.round(detail.total * 0.633);
-      const dh = Math.round(detail.total * 0.307);
-      const unset = Math.max(0, detail.total - dr - dh);
+      const entityKey = metricsContext?.entityKey || 'clinic-sakura';
+      const breakdown = typeof getStaffSalesBreakdown === 'function'
+        ? getStaffSalesBreakdown(detail, entityKey)
+        : splitStaffSalesTotal(detail.total);
+      const segments = [];
+      if (breakdown.dr > 0) {
+        segments.push({
+          label: 'Dr',
+          value: breakdown.dr,
+          displayValue: intelFormatYen(breakdown.dr),
+          color: '#2563eb',
+          rateMuted: true,
+        });
+      }
+      if (breakdown.dh > 0) {
+        segments.push({
+          label: 'DH',
+          value: breakdown.dh,
+          displayValue: intelFormatYen(breakdown.dh),
+          color: '#0891b2',
+          rateMuted: true,
+        });
+      }
+      if (breakdown.unset > 0) {
+        segments.push({
+          label: '未設定',
+          value: breakdown.unset,
+          displayValue: intelFormatYen(breakdown.unset),
+          color: '#94a3b8',
+        });
+      }
       return {
       kpis: buildCompositeKpi({
         accent: '#6366f1',
+        popoverPageId: 'staffSales',
         total: {
           label: '合計売上',
           value: detail.total,
@@ -822,16 +785,12 @@ function getInsightPageData(pageId, period = '本日', metricsContext = null) {
           unit: '',
           sub: '職種内訳',
         },
-        segments: [
-          { label: 'Dr', value: dr, displayValue: intelFormatYen(dr), color: '#2563eb', rateMuted: true },
-          { label: 'DH', value: dh, displayValue: intelFormatYen(dh), color: '#0891b2', rateMuted: true },
-          { label: '未設定', value: unset, displayValue: intelFormatYen(unset), color: '#94a3b8' },
-        ],
+        segments,
       }),
       charts: [
-        buildStaffSalesTrendChart(period, detail, metricsContext?.weight ?? 1),
-        buildDrSalesRankingChart(dr),
-        buildDhSalesRankingChart(dh),
+        buildStaffSalesTrendChart(period, detail, metricsContext?.weight ?? 1, metricsContext),
+        buildDrSalesRankingChart(detail, entityKey),
+        buildDhSalesRankingChart(detail, entityKey),
       ],
     };
     },
@@ -900,7 +859,10 @@ function getInsightPageData(pageId, period = '本日', metricsContext = null) {
     },
     selfPay: () => {
       const b = detail.breakdown || {};
-      const total = Math.max(0, Math.round((b.selfPay || 42800) * weight));
+      const total = Math.max(0, Math.round(b.selfPay || 0));
+      const rateSub = typeof formatSelfPayRateSub === 'function'
+        ? formatSelfPayRateSub(b, detail.total, 'インプラ上位')
+        : '';
       const implant = Math.max(0, Math.round(total * 0.28));
       const ortho = Math.max(0, Math.round(total * 0.24));
       const whitening = Math.max(0, Math.round(total * 0.18));
@@ -914,7 +876,7 @@ function getInsightPageData(pageId, period = '本日', metricsContext = null) {
           value: total,
           displayValue: intelFormatYen(total),
           unit: '',
-          sub: periodSub,
+          sub: rateSub || periodSub,
           trend: insightTrend('+4.2%', true),
         },
         segments: [
@@ -1038,7 +1000,7 @@ function getInsightPageData(pageId, period = '本日', metricsContext = null) {
     },
     visits: () => {
       const outpatientKpi = buildOutpatientInsightKpi(detail, periodSub, 'compact');
-      const visitingKpi = buildVisitingInsightKpi(period, weight, periodSub, 'compact');
+      const visitingKpi = buildVisitingInsightKpi(detail, period, weight, periodSub, 'compact');
       const outpatientTotal = Number(outpatientKpi.total.value) || 0;
       const visitingTotal = Number(visitingKpi.total.value) || 0;
       const patientTotal = outpatientTotal + visitingTotal;
@@ -1061,7 +1023,7 @@ function getInsightPageData(pageId, period = '本日', metricsContext = null) {
         },
       ),
       charts: [
-        buildVisitBreakdownTrendChart(period, detail, metricsContext?.weight ?? 1),
+        buildVisitBreakdownTrendChart(period, detail, metricsContext?.weight ?? 1, metricsContext),
         {
           title: '曜日別来院',
           subtitle: 'シフト・スタッフ配置の参考',
@@ -1094,26 +1056,30 @@ function getInsightPageData(pageId, period = '本日', metricsContext = null) {
     };
     },
     appointments: () => {
-      const appt = scaleInsightCount(34, [
-        { label: '来院済', value: 29, color: '#10b981', rateMuted: true },
-        { label: 'キャンセル', value: 2, color: '#f59e0b' },
-        { label: '無断CX', value: 1, color: '#ef4444' },
-        { label: '未来院', value: 2, color: '#0ea5e9', rateMuted: true },
+      const appt = typeof getAppointments === 'function'
+        ? getAppointments(detail)
+        : { total: detail.visits, breakdown: { visited: detail.visits, notVisited: 0, cancelled: 0, noShow: 0 } };
+      const b = appt.breakdown;
+      const apptKpi = scaleInsightCount(appt.total, [
+        { label: '来院済', value: b.visited, color: '#10b981', rateMuted: true },
+        { label: 'キャンセル', value: b.cancelled, color: '#f59e0b' },
+        { label: '無断CX', value: b.noShow, color: '#ef4444' },
+        { label: '未来院', value: b.notVisited, color: '#0ea5e9', rateMuted: true },
       ], weight);
       return {
       kpis: buildCompositeKpi({
         accent: '#0891b2',
         total: {
           label: '予約合計',
-          value: appt.total,
+          value: apptKpi.total,
           unit: '件',
           sub: periodSub,
           trend: insightTrend('±0', null),
         },
-        segments: appt.segments,
+        segments: apptKpi.segments,
       }),
       charts: [
-        buildAppointmentStatusTrendChart(period, detail, metricsContext?.weight ?? 1),
+        buildAppointmentStatusTrendChart(period, detail, metricsContext?.weight ?? 1, metricsContext),
         buildCancelRankingChart(metricsContext?.weight ?? 1),
         {
           title: '時間帯別予約',

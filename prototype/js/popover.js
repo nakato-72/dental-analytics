@@ -146,7 +146,7 @@ function resolvePopoverConfig(type) {
 function resolvePopoverRows(type, period) {
   if (popoverState.customRows) return popoverState.customRows;
   if (typeof getInsightPopoverRows === 'function') {
-    const insightRows = getInsightPopoverRows(type);
+    const insightRows = getInsightPopoverRows(type, { period });
     if (insightRows.length) return insightRows;
   }
   return typeof getPopoverRows === 'function' ? getPopoverRows(type, period) : [];

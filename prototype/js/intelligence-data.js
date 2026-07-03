@@ -126,12 +126,16 @@ function buildSalesBreakdownPanel(periodKey, override = {}, periodDetail = null)
 
 function buildIntelPanels(overrides = {}, periodKey = '本日', metricsContext = null) {
   const periodDetail = getActivePeriodDetail(periodKey, metricsContext);
-  const periodTotal = periodDetail?.total;
+  const periodTotal = periodDetail?.total ?? 142800;
+  const entityKey = metricsContext?.entityKey || 'clinic-sakura';
+  const staffParts = typeof getStaffSalesBreakdown === 'function'
+    ? getStaffSalesBreakdown(periodDetail, entityKey)
+    : splitStaffSalesTotal(periodTotal);
   const defaultStaff = buildStaffSalesPanel({
-    total: periodTotal ?? 142800,
-    dr: Math.round((periodTotal ?? 142800) * 0.633),
-    dh: Math.round((periodTotal ?? 142800) * 0.307),
-    unset: Math.max(0, (periodTotal ?? 142800) - Math.round((periodTotal ?? 142800) * 0.633) - Math.round((periodTotal ?? 142800) * 0.307)),
+    total: periodTotal,
+    dr: staffParts.dr,
+    dh: staffParts.dh,
+    unset: staffParts.unset,
     trend: 'up',
     trendText: '+3.2%',
   });
@@ -169,9 +173,9 @@ function buildIntelPanels(overrides = {}, periodKey = '本日', metricsContext =
       id: 'selfPay',
       icon: INTELLIGENCE_ICONS.selfPay,
       label: '自費',
-      value: intelFormatYen(Math.round((periodDetail?.breakdown?.selfPay) || 42800)),
+      value: intelFormatYen(Math.round((periodDetail?.breakdown?.selfPay) || 0)),
       unit: '',
-      sub: '売上比 32% / インプラ上位',
+      sub: formatSelfPayRateSub(periodDetail?.breakdown, periodTotal, 'インプラ上位'),
       trend: 'up',
       trendText: '+4.2%',
       trendLabel: '前日比',
@@ -194,6 +198,9 @@ function buildIntelPanels(overrides = {}, periodKey = '本日', metricsContext =
   };
 
   const merged = { ...base, ...overrides };
+  if (overrides.selfPay && base.selfPay) {
+    merged.selfPay = { ...base.selfPay, ...overrides.selfPay };
+  }
   if (merged.unitPrice && merged.unitPrice.type !== 'salesBreakdown') {
     merged.unitPrice = buildSalesBreakdownPanel(periodKey, merged.unitPrice, periodDetail);
   } else if (merged.unitPrice?.type === 'salesBreakdown') {
@@ -210,15 +217,19 @@ function buildIntelPanels(overrides = {}, periodKey = '本日', metricsContext =
   if (merged.staffSales && merged.staffSales.type !== 'staffSales') {
     const s = merged.staffSales;
     const total = s.total ?? periodTotal ?? base.staffSales.total;
+    const entityKey = metricsContext?.entityKey || 'clinic-sakura';
+    const parts = typeof getStaffSalesBreakdown === 'function'
+      ? getStaffSalesBreakdown(periodDetail, entityKey)
+      : splitStaffSalesTotal(total);
     merged.staffSales = buildStaffSalesPanel({
       total,
-      dr: s.dr ?? s.staffBreakdown?.dr ?? 0,
-      dh: s.dh ?? s.staffBreakdown?.dh ?? 0,
-      unset: s.unset ?? s.staffBreakdown?.unset,
-      trend: s.trend,
-      trendText: s.trendText,
-      trendLabel: s.trendLabel,
-      accent: s.accent,
+      dr: s.dr ?? s.staffBreakdown?.dr ?? parts.dr,
+      dh: s.dh ?? s.staffBreakdown?.dh ?? parts.dh,
+      unset: s.unset ?? s.staffBreakdown?.unset ?? parts.unset,
+      trend: s.trend ?? base.staffSales.trend,
+      trendText: s.trendText ?? base.staffSales.trendText,
+      trendLabel: s.trendLabel ?? base.staffSales.trendLabel,
+      accent: s.accent ?? base.staffSales.accent,
     });
   }
   return orderIntelPanels(merged, periodKey, periodDetail);
@@ -234,14 +245,19 @@ const INTEL_PANEL_SECONDARY_IDS = [
 
 function buildVisitTypeBreakdown(periodKey, total, override = {}, periodDetail = null) {
   const detail = periodDetail || getActivePeriodDetail(periodKey);
-  const charts = detail?.charts;
-  const i = Math.max(0, (charts?.visits?.length ?? 1) - 1);
-  const pureFirstDefaults = { '本日': 2, '前日': 3, '今月': 38, '今年': 218 };
-  const returnVisit = override.return ?? charts?.visitsReturn?.[i] ?? 0;
-  const other = override.other ?? charts?.visitsReFirst?.[i] ?? 0;
-  const pureFirst = override.pureFirst ?? pureFirstDefaults[periodKey] ?? 0;
-  const first = override.first ?? Math.max(0, total - pureFirst - returnVisit - other);
-  return { pureFirst, first, return: returnVisit, other };
+  const targetTotal = total ?? detail.visits ?? 0;
+  const base = typeof getOutpatientBreakdown === 'function'
+    ? getOutpatientBreakdown(detail)
+    : { pureFirst: 0, first: 0, return: 0, other: 0 };
+  const merged = {
+    pureFirst: override.pureFirst ?? override.visitBreakdown?.pureFirst ?? base.pureFirst,
+    first: override.first ?? override.visitBreakdown?.first ?? base.first,
+    return: override.return ?? override.visitBreakdown?.return ?? base.return,
+    other: override.other ?? override.visitBreakdown?.other ?? base.other,
+  };
+  return typeof reconcileVisitBreakdown === 'function'
+    ? reconcileVisitBreakdown(merged, targetTotal)
+    : merged;
 }
 
 /** 来院＋訪問を統合した患者数カード */
@@ -255,8 +271,9 @@ function mergeVisitBreakdowns(a, b) {
 }
 
 function buildPatientsPanel(periodKey, outpatientOverride = {}, visitingOverride = {}, periodDetail = null) {
-  const outpatient = buildClinicVisitsPanel(periodKey, outpatientOverride, periodDetail);
-  const visiting = buildVisitingPatientsPanel(periodKey, visitingOverride);
+  const detail = periodDetail || getActivePeriodDetail(periodKey);
+  const outpatient = buildClinicVisitsPanel(periodKey, outpatientOverride, detail);
+  const visiting = buildVisitingPatientsPanel(periodKey, visitingOverride, detail);
   const patientTotal = outpatient.visitTotal + visiting.visitTotal;
 
   return {
@@ -304,23 +321,21 @@ function buildClinicVisitsPanel(periodKey, override = {}, periodDetail = null) {
   };
 }
 
-const VISITING_PATIENT_DEFAULTS = {
-  '本日': { total: 4, pureFirst: 1, first: 1, return: 1, other: 1 },
-  '前日': { total: 3, pureFirst: 1, first: 1, return: 0, other: 1 },
-  '今月': { total: 52, pureFirst: 12, first: 14, return: 18, other: 8 },
-  '今年': { total: 286, pureFirst: 62, first: 78, return: 102, other: 44 },
-};
-
 /** 訪問患者数カード（来院患者数と同デザイン） */
-function buildVisitingPatientsPanel(periodKey, override = {}) {
-  const defaults = VISITING_PATIENT_DEFAULTS[periodKey] || VISITING_PATIENT_DEFAULTS['本日'];
-  const total = override.total ?? defaults.total;
-  const visitBreakdown = {
-    pureFirst: override.pureFirst ?? defaults.pureFirst,
-    first: override.first ?? defaults.first,
-    return: override.return ?? defaults.return,
-    other: override.other ?? defaults.other,
-  };
+function buildVisitingPatientsPanel(periodKey, override = {}, periodDetail = null) {
+  const detail = periodDetail || getActivePeriodDetail(periodKey);
+  const visiting = typeof getVisitingPatients === 'function'
+    ? getVisitingPatients(detail)
+    : { total: 0, breakdown: { pureFirst: 0, first: 0, return: 0, other: 0 } };
+  const total = override.total ?? visiting.total;
+  const visitBreakdown = typeof reconcileVisitBreakdown === 'function'
+    ? reconcileVisitBreakdown({
+      pureFirst: override.pureFirst ?? visiting.breakdown.pureFirst,
+      first: override.first ?? visiting.breakdown.first,
+      return: override.return ?? visiting.breakdown.return,
+      other: override.other ?? visiting.breakdown.other,
+    }, total)
+    : visiting.breakdown;
 
   const trendDefaults = {
     '本日': { trend: 'down', trendText: '-1名', trendLabel: '前日比' },
@@ -359,8 +374,14 @@ const APPOINTMENT_BREAKDOWN_DEFAULTS = {
 };
 
 /** 予約数カード（合計＋来院済/未来院/キャンセル/無断キャンセル） */
-function buildAppointmentsPanel(periodKey, override = {}) {
-  const defaults = APPOINTMENT_BREAKDOWN_DEFAULTS[periodKey] || APPOINTMENT_BREAKDOWN_DEFAULTS['本日'];
+function buildAppointmentsPanel(periodKey, override = {}, periodDetail = null) {
+  const detail = periodDetail || getActivePeriodDetail(periodKey);
+  const stored = typeof getAppointments === 'function'
+    ? getAppointments(detail)
+    : null;
+  const defaults = stored?.breakdown
+    ? { total: stored.total, ...stored.breakdown }
+    : (APPOINTMENT_BREAKDOWN_DEFAULTS[periodKey] || APPOINTMENT_BREAKDOWN_DEFAULTS['本日']);
   const total = override.total ?? override.appointmentTotal ?? defaults.total;
   const appointmentBreakdown = {
     visited: override.visited ?? defaults.visited,
@@ -407,7 +428,7 @@ function orderIntelPanels(merged, periodKey, periodDetail = null) {
   const appointmentsOverride = merged.appointments && merged.appointments.type !== 'appointmentBreakdown'
     ? merged.appointments
     : { ...(merged.appointments || {}) };
-  merged.appointments = buildAppointmentsPanel(periodKey, appointmentsOverride);
+  merged.appointments = buildAppointmentsPanel(periodKey, appointmentsOverride, detail);
 
   if (merged.staffSales?.type === 'staffSales') {
     merged.staffSales.label = '職種別売上';
@@ -425,30 +446,30 @@ function orderIntelPanels(merged, periodKey, periodDetail = null) {
 const PERIOD_INTEL_OVERRIDES = {
   '前日': {
     unitPrice: { trend: 'up', trendText: '+2.1%' },
-    staffSales: { dr: 118600, dh: 59800, unset: 8000, trendText: '+5.4%' },
+    staffSales: { trendText: '+5.4%' },
     utilization: { value: '81.2', progress: 99, trendText: '+3.0pt' },
-    appointments: { total: 42, trend: 'up', trendText: '+8件' },
-    newPatients: { total: 3, trend: 'up', trendText: '+1名', sub: '前日予約 2名' },
+    appointments: { trendText: '+8件' },
+    newPatients: { trend: 'up', trendText: '+1名', sub: '前日予約 2名' },
   },
   '本日': {},
   '今月': {
     unitPrice: { trend: 'up', trendText: '+3.8%' },
-    staffSales: { dr: 2640000, dh: 1520000, unset: 120000, trendText: '+4.8%' },
+    staffSales: { trendText: '+4.8%' },
     utilization: { value: '76.8', progress: 94, sub: '目標 82% / 当月平均', trendText: '+1.2pt' },
-    appointments: { total: 912, trend: 'up', trendText: '+48件' },
-    newPatients: { total: 52, trend: 'up', trendText: '+6名', sub: '目標 50名', progress: 76 },
+    appointments: { trendText: '+48件' },
+    newPatients: { trend: 'up', trendText: '+6名', sub: '目標 50名', progress: 76 },
     recall: { value: '71.5', progress: 88, trendText: '+2.1pt' },
-    selfPay: { value: intelFormatYen(1284000), trendText: '+5.8%', sub: '売上比 33%' },
+    selfPay: { trendText: '+5.8%' },
     questionnaire: { value: '84.2', progress: 85, trendText: '+12件', sub: '完了 812件 / 未回答 48件' },
   },
   '今年': {
     unitPrice: { trend: 'up', trendText: '+5.2%' },
-    staffSales: { dr: 15100000, dh: 8050000, unset: 1000000, trendText: '+9.6%' },
+    staffSales: { trendText: '+9.6%' },
     utilization: { value: '74.2', progress: 90, sub: '目標 80% / 年間平均', trendText: '+0.8pt' },
-    appointments: { total: 5240, trend: 'up', trendText: '+412件' },
-    newPatients: { total: 286, trend: 'up', trendText: '+24名', sub: '前年比 +12%' },
+    appointments: { trendText: '+412件' },
+    newPatients: { trend: 'up', trendText: '+24名', sub: '前年比 +12%' },
     recall: { value: '69.8', progress: 85, trendText: '+0.9pt' },
-    selfPay: { value: intelFormatYen(7620000), trendText: '+8.4%', sub: '売上比 31%' },
+    selfPay: { trendText: '+8.4%' },
     questionnaire: { value: '81.6', progress: 82, trendText: '+186件', sub: '年間 4,268件 / 未回答 312件' },
   },
 };
@@ -472,9 +493,11 @@ function getIntelligenceData(periodKey, metricsContext = null) {
     ...panelLayout.secondary,
   ];
   const breakdown = getStaffBreakdownFromPanels(allPanels);
-  const chartSource = typeof buildStaffSalesChartForEntity === 'function'
-    ? buildStaffSalesChartForEntity(entityKey, periodKey, breakdown, detail)
-    : getDefaultStaffSalesChart(periodKey);
+  const chartSource = typeof buildStaffSalesChartFromDetail === 'function'
+    ? buildStaffSalesChartFromDetail(detail, entityKey)
+    : (typeof buildStaffSalesChartForEntity === 'function'
+      ? buildStaffSalesChartForEntity(entityKey, periodKey, breakdown, detail)
+      : getDefaultStaffSalesChart(periodKey, detail));
   const staffSalesChart = reconcileStaffSalesChart(chartSource, breakdown);
   const utilizationChart = typeof buildUtilizationChartForEntity === 'function'
     ? buildUtilizationChartForEntity(entityKey, periodKey)
@@ -489,7 +512,10 @@ function getIntelligenceData(periodKey, metricsContext = null) {
   };
 }
 
-function getDefaultStaffSalesChart(periodKey) {
+function getDefaultStaffSalesChart(periodKey, detail = null) {
+  if (detail && typeof buildStaffSalesChartFromDetail === 'function') {
+    return buildStaffSalesChartFromDetail(detail, 'clinic-sakura');
+  }
   const maps = {
     '前日': {
       labels: ['田中 Dr', '佐藤 Dr', '鈴木 DH', '山田 DH', '未設定'],
@@ -518,79 +544,6 @@ function getDefaultStaffSalesChart(periodKey) {
 function getStaffBreakdownFromPanels(panels) {
   const panel = panels.find((p) => p.type === 'staffSales');
   return panel?.staffBreakdown || { dr: 0, dh: 0, unset: 0 };
-}
-
-/** チャート各行の合計がパネル内訳（Dr+DH+未設定）と一致するよう未設定行を調整 */
-function reconcileStaffSalesChart(chart, breakdown) {
-  const chartCopy = {
-    labels: [...chart.labels],
-    insurance: [...chart.insurance],
-    selfPay: [...chart.selfPay],
-  };
-
-  if (breakdown.unset === 0) {
-    const unsetIdx = chartCopy.labels.findIndex((l) => l.includes('未設定'));
-    if (unsetIdx >= 0) {
-      chartCopy.labels.splice(unsetIdx, 1);
-      chartCopy.insurance.splice(unsetIdx, 1);
-      chartCopy.selfPay.splice(unsetIdx, 1);
-    }
-  }
-
-  const targetTotal = breakdown.dr + breakdown.dh + breakdown.unset;
-  const rows = chartCopy.labels.map((label, i) => ({
-    label,
-    insurance: chartCopy.insurance[i] || 0,
-    selfPay: chartCopy.selfPay[i] || 0,
-    total: (chartCopy.insurance[i] || 0) + (chartCopy.selfPay[i] || 0),
-    role: label.includes('未設定') ? 'unset' : label.includes('DH') ? 'dh' : 'dr',
-  }));
-
-  let drSum = rows.filter((r) => r.role === 'dr').reduce((s, r) => s + r.total, 0);
-  let dhSum = rows.filter((r) => r.role === 'dh').reduce((s, r) => s + r.total, 0);
-  const unsetRow = rows.find((r) => r.role === 'unset');
-
-  if (unsetRow) {
-    unsetRow.total = breakdown.unset;
-    const insRatio = chartCopy.insurance[chartCopy.labels.indexOf(unsetRow.label)] /
-      ((chartCopy.insurance[chartCopy.labels.indexOf(unsetRow.label)] || 0) + (chartCopy.selfPay[chartCopy.labels.indexOf(unsetRow.label)] || 1));
-    unsetRow.insurance = Math.round(breakdown.unset * (Number.isFinite(insRatio) ? insRatio : 0.6));
-    unsetRow.selfPay = breakdown.unset - unsetRow.insurance;
-  }
-
-  drSum = rows.filter((r) => r.role === 'dr').reduce((s, r) => s + r.total, 0);
-  dhSum = rows.filter((r) => r.role === 'dh').reduce((s, r) => s + r.total, 0);
-  const unsetSum = rows.filter((r) => r.role === 'unset').reduce((s, r) => s + r.total, 0);
-
-  if (drSum !== breakdown.dr || dhSum !== breakdown.dh) {
-    const drRows = rows.filter((r) => r.role === 'dr');
-    const dhRows = rows.filter((r) => r.role === 'dh');
-    scaleRoleRows(drRows, breakdown.dr);
-    scaleRoleRows(dhRows, breakdown.dh);
-  }
-
-  return {
-    labels: rows.map((r) => r.label),
-    insurance: rows.map((r) => r.insurance),
-    selfPay: rows.map((r) => r.selfPay),
-    breakdown,
-  };
-}
-
-function scaleRoleRows(rows, target) {
-  const current = rows.reduce((s, r) => s + r.total, 0);
-  if (!rows.length || current === 0) return;
-  const factor = target / current;
-  rows.forEach((r) => {
-    r.total = Math.round(r.total * factor);
-    r.insurance = Math.round(r.insurance * factor);
-    r.selfPay = r.total - r.insurance;
-  });
-  const diff = target - rows.reduce((s, r) => s + r.total, 0);
-  if (diff !== 0 && rows.length) {
-    rows[0].total += diff;
-    rows[0].selfPay += diff;
-  }
 }
 
 function getDefaultUtilizationChart(periodKey) {

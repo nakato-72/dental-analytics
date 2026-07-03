@@ -504,8 +504,31 @@ function getInsightPopoverConfig(type) {
   return INSIGHT_POPOVER_CONFIG[type] || null;
 }
 
-function getInsightPopoverRows(type) {
-  return (INSIGHT_POPOVER_ROWS[type] || []).map((r) => ({ ...r }));
+function getInsightPopoverRows(type, options = {}) {
+  const templates = (INSIGHT_POPOVER_ROWS[type] || []).map((r) => ({ ...r }));
+  let metricsContext = options.metricsContext;
+  const detail = options.detail ?? (() => {
+    const period = options.period
+      || (typeof insightState !== 'undefined' ? insightState.period : '本日');
+    if (typeof resolvePeriodDetail === 'function') {
+      metricsContext = metricsContext ?? (typeof getMetricsContext === 'function'
+        ? getMetricsContext(typeof insightState !== 'undefined' ? insightState : {
+          level: 'clinic',
+          clinicId: 'clinic-sakura',
+          selectedPeriod: period,
+        })
+        : { entityKey: 'clinic-sakura', weight: 1 });
+      return resolvePeriodDetail(period, metricsContext);
+    }
+    return MOCK_DATA?.periodDetails?.[period] ?? null;
+  })();
+  const entityKey = options.entityKey
+    || metricsContext?.entityKey
+    || 'clinic-sakura';
+  if (typeof buildInsightPopoverRows === 'function') {
+    return buildInsightPopoverRows(type, templates, detail, { ...options, entityKey });
+  }
+  return templates;
 }
 
 /** チャート要素ラベル → ポップオーバー種別（ページ横断） */
@@ -620,6 +643,20 @@ function buildChartPopoverOptions(pageId, label, context = {}) {
     parts.push(displayVal);
   }
   const titleSuffix = parts.join(' · ');
-  const rows = getInsightPopoverRows(type);
+  const metricsContext = typeof getMetricsContext === 'function'
+    && typeof insightState !== 'undefined'
+    ? getMetricsContext(insightState)
+    : null;
+  const detail = typeof resolvePeriodDetail === 'function'
+    ? resolvePeriodDetail(context.period || insightState?.period || '本日', metricsContext || { entityKey: 'clinic-sakura', weight: 1 })
+    : null;
+  const rows = getInsightPopoverRows(type, {
+    detail,
+    period: context.period,
+    pageId,
+    segmentLabel: itemLabel,
+    entityKey: metricsContext?.entityKey,
+    metricsContext,
+  });
   return { titleSuffix, rows };
 }

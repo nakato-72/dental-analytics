@@ -100,9 +100,9 @@ const MOCK_DATA = {
       title: '月次売上推移（1年間）',
       labels: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
       insurance: [3200000, 3450000, 3380000, 3620000, 3890000, 2640000, 3780000, 3920000, 3850000, 4010000, 4180000, 4350000],
-      selfPay: [1420000, 1580000, 1650000, 1720000, 1840000, 1640000, 1780000, 1850000, 1920000, 1980000, 2050000, 2120000],
+      selfPay: [1420000, 1580000, 1650000, 1720000, 1840000, 1280000, 1780000, 1850000, 1920000, 1980000, 2050000, 2120000],
       products: [280000, 300000, 310000, 330000, 350000, 360000, 370000, 385000, 390000, 400000, 415000, 428000],
-      other: [60000, 55000, 48000, 42000, 38000, 32000, 35000, 30000, 28000, 25000, 22000, 20000],
+      other: [60000, 55000, 48000, 42000, 38000, 0, 35000, 30000, 28000, 25000, 22000, 20000],
       highlightIndex: 5,
     },
   },
@@ -160,6 +160,19 @@ const MOCK_DATA = {
         { label: '自費未収', value: '¥6,200', unit: '', sub: '要フォロー 2名' },
         { label: '入金率', value: '95.8', unit: '%', sub: '目標 95%', progress: 99 },
       ],
+      patients: {
+        outpatient: {
+          breakdown: { pureFirst: 3, first: 7, return: 24, other: 4 },
+        },
+        visiting: {
+          total: 3,
+          breakdown: { pureFirst: 1, first: 1, return: 0, other: 1 },
+        },
+      },
+      appointments: {
+        total: 42,
+        breakdown: { visited: 38, notVisited: 2, cancelled: 1, noShow: 1 },
+      },
     },
     '本日': {
       salesLabel: '本日売上',
@@ -196,6 +209,19 @@ const MOCK_DATA = {
         { label: '自費未収', value: '¥4,200', unit: '', sub: '要フォロー 1名' },
         { label: '入金率', value: '96.1', unit: '%', sub: '目標 95%', progress: 99 },
       ],
+      patients: {
+        outpatient: {
+          breakdown: { pureFirst: 2, first: 6, return: 17, other: 4 },
+        },
+        visiting: {
+          total: 4,
+          breakdown: { pureFirst: 1, first: 1, return: 1, other: 1 },
+        },
+      },
+      appointments: {
+        total: 34,
+        breakdown: { visited: 29, notVisited: 2, cancelled: 2, noShow: 1 },
+      },
     },
     '今月': {
       salesLabel: '今月売上',
@@ -224,7 +250,7 @@ const MOCK_DATA = {
       insights: [
         { label: '患者単価', value: '¥5,052', sub: '前月比 +3.8%' },
         { label: '新患', value: '38', unit: '名', sub: '目標 50名', progress: 76 },
-        { label: '自費率', value: '38.2', unit: '%', sub: '前月比 +2.1pt' },
+        { label: '自費率', value: '29.9', unit: '%', sub: '前月比 +2.1pt' },
         { label: '予約数', value: '912', unit: '件', sub: '実績 847件 / 残枠 65' },
         { label: 'キャンセル数 / キャンセル率', cancelCount: 35, cancelRate: 3.8, sub: '前月比 -0.4pt' },
       ],
@@ -233,6 +259,19 @@ const MOCK_DATA = {
         { label: '自費未収', value: '¥96,000', unit: '', sub: '要フォロー 8名' },
         { label: '当月入金率', value: '94.2', unit: '%', sub: '目標 95%', progress: 99 },
       ],
+      patients: {
+        outpatient: {
+          breakdown: { pureFirst: 38, first: 140, return: 585, other: 84 },
+        },
+        visiting: {
+          total: 52,
+          breakdown: { pureFirst: 12, first: 14, return: 18, other: 8 },
+        },
+      },
+      appointments: {
+        total: 912,
+        breakdown: { visited: 847, notVisited: 55, cancelled: 7, noShow: 3 },
+      },
     },
     '今年': {
       salesLabel: '今年売上',
@@ -261,7 +300,7 @@ const MOCK_DATA = {
       insights: [
         { label: '患者単価', value: '¥4,936', sub: '前年比 +5.2%' },
         { label: '新患累計', value: '218', unit: '名', sub: '前年比 +12%' },
-        { label: '自費率', value: '37.1', unit: '%', sub: '前年比 +1.8pt' },
+        { label: '自費率', value: '29.8', unit: '%', sub: '前年比 +1.8pt' },
         { label: '予約数', value: '5,240', unit: '件', sub: '実績 4,892件' },
         { label: 'キャンセル数 / キャンセル率', cancelCount: 186, cancelRate: 3.5, sub: '前年比 -0.3pt' },
       ],
@@ -270,6 +309,19 @@ const MOCK_DATA = {
         { label: '自費未収', value: '¥148,000', unit: '', sub: '要フォロー 12名' },
         { label: '入金率', value: '93.6', unit: '%', sub: '目標 95%', progress: 96 },
       ],
+      patients: {
+        outpatient: {
+          breakdown: { pureFirst: 218, first: 734, return: 3502, other: 438 },
+        },
+        visiting: {
+          total: 286,
+          breakdown: { pureFirst: 62, first: 78, return: 102, other: 44 },
+        },
+      },
+      appointments: {
+        total: 5240,
+        breakdown: { visited: 4892, notVisited: 280, cancelled: 48, noShow: 20 },
+      },
     },
   },
 };

@@ -55,9 +55,10 @@ function initDetailPage() {
   }
 
   const levelLabel = { all: '全院', clinic: '医院', role: '職種', staff: '担当' }[level] || '';
-  const rows = (typeof getInsightPopoverRows === 'function' && getInsightPopoverRows(type).length
-    ? getInsightPopoverRows(type)
-    : getPopoverRows(type, period));
+  const insightRows = typeof getInsightPopoverRows === 'function'
+    ? getInsightPopoverRows(type, { period })
+    : [];
+  const rows = insightRows.length ? insightRows : getPopoverRows(type, period);
 
   document.title = `${config.title} | Dental Analytics`;
   document.getElementById('detail-title').textContent = config.title;
