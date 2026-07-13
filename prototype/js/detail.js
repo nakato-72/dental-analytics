@@ -55,10 +55,20 @@ function initDetailPage() {
   }
 
   const levelLabel = { all: '全院', clinic: '医院', role: '職種', staff: '担当' }[level] || '';
+  const clinicId = params.get('clinicId') || 'clinic-sakura';
+  const role = params.get('role') || null;
+  const staffId = params.get('staffId') || null;
+  const metricsContext = typeof getMetricsContext === 'function'
+    ? getMetricsContext({ level, clinicId, role, staffId })
+    : { entityKey: 'clinic-sakura', weight: 1 };
+  const detail = typeof resolvePeriodDetail === 'function'
+    ? resolvePeriodDetail(period, metricsContext)
+    : null;
+  const popoverOpts = { period, detail, metricsContext, entityKey: metricsContext.entityKey };
   const insightRows = typeof getInsightPopoverRows === 'function'
-    ? getInsightPopoverRows(type, { period })
+    ? getInsightPopoverRows(type, popoverOpts)
     : [];
-  const rows = insightRows.length ? insightRows : getPopoverRows(type, period);
+  const rows = insightRows.length ? insightRows : getPopoverRows(type, period, popoverOpts);
 
   document.title = `${config.title} | Dental Analytics`;
   document.getElementById('detail-title').textContent = config.title;

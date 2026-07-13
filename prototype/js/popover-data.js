@@ -67,8 +67,9 @@ const POPOVER_CONFIG = {
 
 const CANCEL_TYPE_CLASS = {
   '当日': 'cancel-same-day',
-  '前日': 'cancel-day-before',
-  '事前': 'cancel-advance',
+  '前日': 'cancel-advance-day',
+  '前日以降': 'cancel-advance-day',
+  '事前': 'cancel-advance-day',
   '無断': 'cancel-no-show',
 };
 
@@ -154,14 +155,44 @@ function getPopoverTypeForLabel(label) {
   return CARD_POPOVER_TYPES[label] || null;
 }
 
-function getPopoverRows(type, period) {
-  const base = (POPOVER_MOCK_ROWS[type] || []).map(r => ({ ...r }));
+function getPopoverRows(type, period, options = {}) {
+  const base = (POPOVER_MOCK_ROWS[type] || []).map((r) => ({ ...r }));
   const extra = POPOVER_PERIOD_EXTRA[period]?.[type] || [];
-  if (period === '今年') {
-    const monthExtra = POPOVER_PERIOD_EXTRA['今月']?.[type] || [];
-    return [...base, ...monthExtra, ...extra];
+  let templates = period === '今年'
+    ? [...base, ...(POPOVER_PERIOD_EXTRA['今月']?.[type] || []), ...extra]
+    : [...base, ...extra];
+
+  const detail = options.detail;
+  if (!detail) return templates;
+
+  if (typeof expandPopoverRows === 'function') {
+    if (type === 'newPatients' && typeof getOutpatientBreakdown === 'function') {
+      const out = getOutpatientBreakdown(detail);
+      const count = (out.pureFirst || 0) + (out.first || 0);
+      if (count > 0) return expandPopoverRows(templates, count);
+    }
+    if (type === 'appointments' && typeof getAppointments === 'function') {
+      const count = getAppointments(detail).total;
+      if (count > 0) return expandPopoverRows(templates, count);
+    }
+    if (type === 'cancellations' && typeof getAppointments === 'function') {
+      const b = getAppointments(detail).breakdown;
+      const count = (b.cancelled || 0) + (b.noShow || 0);
+      if (count > 0) return expandPopoverRows(templates, count);
+    }
   }
-  return [...base, ...extra];
+
+  if (typeof scalePopoverRowsToAmount === 'function' && typeof getPaymentRecord === 'function') {
+    const payment = getPaymentRecord(detail);
+    if (type === 'receivables' && payment.receivables > 0) {
+      return scalePopoverRowsToAmount(templates, 'amount', payment.receivables, detail);
+    }
+    if (type === 'selfPayReceivables' && payment.selfPayReceivables > 0) {
+      return scalePopoverRowsToAmount(templates, 'amount', payment.selfPayReceivables, detail);
+    }
+  }
+
+  return templates;
 }
 
 function getPopoverConfig(type) {

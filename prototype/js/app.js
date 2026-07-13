@@ -1,6 +1,6 @@
 /**
  * ダッシュボード UI ロジック
- * 階層: 医院 → 職種(Dr/DH/DA) → 担当
+ * 階層: 医院 → 職種(Dr/DH/未設定) → 担当
  * 表示: 全階層で同一レイアウト（後から level ごとに差し替え可能）
  */
 
@@ -10,7 +10,7 @@ const state = {
   role: null,
   staffId: null,
   selectedPeriod: '本日',
-  expanded: { all: true, 'clinic-sakura': true, 'clinic-harbor': false },
+  expanded: { 'clinic-sakura': true },
   intelPanelOrder: null,
   navOrder: null,
 };
@@ -383,7 +383,7 @@ function getDefaultNavOrder() {
   const order = { clinics: [], roles: {}, staff: {} };
   for (const clinic of MOCK_DATA.clinics) {
     order.clinics.push(clinic.id);
-    const roleKeys = ['Dr', 'DH', 'DA'].filter((rk) => (clinic.roles[rk]?.length > 0));
+    const roleKeys = ['Dr', 'DH', 'unset'].filter((rk) => (clinic.roles[rk]?.length > 0));
     order.roles[clinic.id] = roleKeys;
     for (const rk of roleKeys) {
       order.staff[`${clinic.id}-${rk}`] = clinic.roles[rk].map((m) => m.id);
@@ -775,25 +775,12 @@ function renderNav() {
   const tree = document.getElementById('nav-tree');
   let html = '';
 
-  const allActive = state.level === 'all';
-  const allExpanded = state.expanded.all;
-  html += `
-    <li class="nav-item nav-item--root">
-      <div class="nav-row nav-row--root ${allActive ? 'active' : ''}" data-action="select-all">
-        <span class="nav-row__drag-handle nav-row__drag-handle--spacer" aria-hidden="true"></span>
-        <span class="nav-toggle ${allExpanded ? 'open' : ''}" data-action="toggle" data-key="all">▶</span>
-        <span class="nav-icon">${ICONS.building}</span>
-        <span class="nav-label">全院</span>
-      </div>
-      <ul class="nav-children nav-children--level-1 ${allExpanded ? '' : 'hidden'}">
-  `;
-
   for (const clinic of getOrderedClinics()) {
     const cActive = isActive('clinic', clinic.id);
-    const cExpanded = state.expanded[clinic.id];
+    const cExpanded = state.expanded[clinic.id] !== false;
     html += `
-      <li class="nav-item">
-        <div class="nav-row ${cActive ? 'active' : ''}" data-action="select-clinic" data-clinic="${clinic.id}" data-nav-group="clinics" data-nav-id="${clinic.id}">
+      <li class="nav-item nav-item--root">
+        <div class="nav-row nav-row--root ${cActive ? 'active' : ''}" data-action="select-clinic" data-clinic="${clinic.id}" data-nav-group="clinics" data-nav-id="${clinic.id}">
           ${renderNavDragHandle()}
           <span class="nav-toggle ${cExpanded ? 'open' : ''}" data-action="toggle" data-key="${clinic.id}">▶</span>
           <span class="nav-icon">${ICONS.building}</span>
@@ -808,15 +795,16 @@ function renderNav() {
       const rActive = isActive('role', clinic.id, roleKey);
       const roleKeyId = `${clinic.id}-${roleKey}`;
       const rExpanded = state.expanded[roleKeyId] !== false;
-      const color = MOCK_DATA.roleColors[roleKey];
+      const color = MOCK_DATA.roleColors[roleKey] || '#94a3b8';
+      const roleTag = roleKey === 'unset' ? '未' : roleKey;
 
       html += `
         <li class="nav-item">
           <div class="nav-row ${rActive ? 'active' : ''}" data-action="select-role" data-clinic="${clinic.id}" data-role="${roleKey}" data-nav-group="roles" data-nav-parent="${clinic.id}" data-nav-id="${roleKey}">
             ${renderNavDragHandle()}
             <span class="nav-toggle ${rExpanded ? 'open' : ''}" data-action="toggle" data-key="${roleKeyId}">▶</span>
-            <span class="role-tag" style="background:${color}18;color:${color}">${roleKey}</span>
-            <span class="nav-label">${MOCK_DATA.roleLabels[roleKey]}</span>
+            <span class="role-tag" style="background:${color}18;color:${color}">${roleTag}</span>
+            <span class="nav-label">${MOCK_DATA.roleLabels[roleKey] || roleKey}</span>
             <span class="nav-icon" style="margin-left:auto">${ICONS.users}</span>
           </div>
           <ul class="nav-children nav-children--level-3 ${rExpanded ? '' : 'hidden'}">
@@ -842,7 +830,6 @@ function renderNav() {
     html += '</ul></li>';
   }
 
-  html += '</ul></li>';
   tree.innerHTML = html;
 }
 
@@ -1334,10 +1321,8 @@ function renderIntelStaffSalesBreakdown(p) {
   const items = [
     { label: 'Dr', amount: b.dr, color: MOCK_DATA.roleColors.Dr },
     { label: 'DH', amount: b.dh, color: MOCK_DATA.roleColors.DH },
+    { label: '未設定', amount: b.unset, color: '#94a3b8' },
   ];
-  if (b.unset > 0) {
-    items.push({ label: '未設定', amount: b.unset, color: '#94a3b8' });
-  }
   const chartHtml = renderIntelMiniDonut(items.map((item) => ({ value: item.amount, color: item.color })));
   const rows = items.map((item) => ({
     label: item.label,
@@ -1385,13 +1370,48 @@ function renderIntelVisitBreakdown(p) {
 }
 
 function renderIntelAppointmentBreakdown(p) {
-  const b = p.appointmentBreakdown;
-  return renderIntelCountBreakdown([
-    { label: '来院済', count: b.visited },
-    { label: '未来院', count: b.notVisited },
-    { label: 'キャンセル', count: b.cancelled },
-    { label: '無断キャンセル', count: b.noShow },
-  ], '件', INTEL_APPOINTMENT_COLORS);
+  const raw = p.appointmentBreakdown;
+  const b = typeof normalizeAppointmentBreakdown === 'function'
+    ? normalizeAppointmentBreakdown(raw)
+    : raw;
+  const total = p.appointmentTotal
+    || (b.visited + b.notVisited + b.cancelled);
+  const pct = (v) => (total > 0 ? Math.round((v / total) * 1000) / 10 : 0);
+  const cancelTotal = b.cancelled;
+  const chartHtml = renderIntelMiniBars([
+    { value: b.visited, color: '#10b981' },
+    { value: b.notVisited, color: '#0ea5e9' },
+    { value: cancelTotal, color: '#f59e0b' },
+  ]);
+  const rows = [
+    {
+      label: '来院済',
+      text: `${b.visited}件`,
+      valueHtml: `${b.visited.toLocaleString('ja-JP')}<span class="unit">件</span>`,
+    },
+    {
+      label: '未来院',
+      text: `${b.notVisited}件`,
+      valueHtml: `${b.notVisited.toLocaleString('ja-JP')}<span class="unit">件</span>`,
+    },
+    {
+      label: 'キャンセル',
+      text: `${cancelTotal}件`,
+      valueHtml: `
+        <div class="intel-appt-cancel-block">
+          <div class="intel-appt-cancel-summary">
+            <span class="intel-appt-cancel-count">${cancelTotal.toLocaleString('ja-JP')}</span>
+            <span class="intel-appt-cancel-rate">率 ${pct(cancelTotal)}%</span>
+          </div>
+          <div class="intel-appt-cancel-breakdown">
+            <span class="intel-appt-cancel-item" style="--item-color:#eab308">当日 <strong>${b.cancelSameDay}</strong> <span>率 ${pct(b.cancelSameDay)}%</span></span>
+            <span class="intel-appt-cancel-item" style="--item-color:#f59e0b">前日以降 <strong>${b.cancelAdvance}</strong> <span>率 ${pct(b.cancelAdvance)}%</span></span>
+            <span class="intel-appt-cancel-item" style="--item-color:#ef4444">無断 <strong>${b.noShow}</strong> <span>率 ${pct(b.noShow)}%</span></span>
+          </div>
+        </div>`,
+    },
+  ];
+  return renderIntelBreakdownRows(chartHtml, rows);
 }
 
 function renderIntelPanelSlot(p, grid, index) {
@@ -1531,7 +1551,7 @@ function renderIntelStaffChart(chart) {
     <div class="intel-hbar-summary">
       <span>Dr <strong>${intelFormatYen(summary.dr)}</strong></span>
       <span>DH <strong>${intelFormatYen(summary.dh)}</strong></span>
-      ${summary.unset > 0 ? `<span class="intel-hbar-summary--unset">未設定 <strong>${intelFormatYen(summary.unset)}</strong></span>` : ''}
+      <span class="intel-hbar-summary--unset">未設定 <strong>${intelFormatYen(summary.unset)}</strong></span>
       <span class="intel-hbar-summary-total">合計 <strong>${intelFormatYen(summary.dr + summary.dh + summary.unset)}</strong></span>
     </div>` : '';
 
@@ -1988,13 +2008,7 @@ function handleNavTreeClick(e) {
   if (!row) return;
   const action = row.dataset.action;
 
-  if (action === 'select-all') {
-    state.level = 'all';
-    state.clinicId = null;
-    state.role = null;
-    state.staffId = null;
-    if (!IS_INSIGHT_PAGE) state.selectedPeriod = '本日';
-  } else if (action === 'select-clinic') {
+  if (action === 'select-clinic') {
     state.level = 'clinic';
     state.clinicId = row.dataset.clinic;
     state.role = null;

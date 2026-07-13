@@ -1,12 +1,106 @@
 /**
  * 階層別サンプルデータ — 医院 / 職種 / 担当ごとに数値を切り替え
- * ベースは MOCK_DATA.periodDetails（さくら歯科）を weight でスケール
+ * 日次ファクト（daily facts）を正本とし、期間合計は集計で算出（ボトムアップ）
+ * MOCK_DATA.periodDetails はテンプレート（チャートメタ・前年比など）兼シード値
  */
 
 const PERIOD_KEYS = ['前日', '本日', '今月', '今年'];
 
-/** 職種別売上按分 — 日次トレンドのフォールバック（KPIはチャート行合計が正） */
-const STAFF_SALES_ROLE_RATIOS = { dr: 0.64, dh: 0.29, unset: 0.07 };
+/** 売上を担当に帰属できる職種（歯科助手は売上なし） */
+const SALES_ATTRIBUTION_ROLES = ['Dr', 'DH'];
+const UNSET_CHART_LABEL = '未設定';
+
+function getClinics() {
+  return MOCK_DATA?.clinics || [];
+}
+
+function getClinicById(clinicId) {
+  return getClinics().find((c) => c.id === clinicId) || null;
+}
+
+function getClinicRevenueWeight(clinicId) {
+  const w = getClinicById(clinicId)?.revenueWeight;
+  return Number.isFinite(w) ? w : 1;
+}
+
+function getAllClinicsRevenueWeight() {
+  return getClinics().reduce((sum, c) => sum + getClinicRevenueWeight(c.id), 0);
+}
+
+function staffMemberChartLabel(member, roleKey) {
+  const roleShort = roleKey === 'Dr' ? 'Dr' : (roleKey === 'DH' ? 'DH' : roleKey);
+  const firstName = String(member?.name || '').split(/\s+/)[0];
+  return `${firstName} ${roleShort}`;
+}
+
+function buildStaffRevenueRegistry() {
+  const registry = {};
+  getClinics().forEach((clinic) => {
+    const rows = [];
+    SALES_ATTRIBUTION_ROLES.forEach((roleKey) => {
+      (clinic.roles?.[roleKey] || []).forEach((member) => {
+        const share = Number(member.salesShare);
+        if (!Number.isFinite(share) || share <= 0) return;
+        rows.push({
+          id: member.id,
+          chartLabel: staffMemberChartLabel(member, roleKey),
+          role: roleKey,
+          share,
+          name: member.name,
+        });
+      });
+    });
+    registry[clinic.id] = rows;
+  });
+  return registry;
+}
+
+let staffRevenueRegistryCache = null;
+
+function getStaffRevenueRegistry() {
+  if (!staffRevenueRegistryCache) staffRevenueRegistryCache = buildStaffRevenueRegistry();
+  return staffRevenueRegistryCache;
+}
+
+function getStaffRegistry(clinicId) {
+  return getStaffRevenueRegistry()[clinicId] || [];
+}
+
+function sumStaffShares(staff, role = null) {
+  const rows = role ? staff.filter((s) => s.role === role) : staff;
+  return rows.reduce((sum, s) => sum + s.share, 0);
+}
+
+function getStaffRoleShares(clinicId) {
+  const staff = getStaffRegistry(clinicId);
+  return {
+    dr: sumStaffShares(staff, 'Dr'),
+    dh: sumStaffShares(staff, 'DH'),
+  };
+}
+
+function splitStaffSalesTotal(total, clinicId = 'clinic-sakura') {
+  const t = Math.max(0, Math.round(total));
+  const staff = getStaffRegistry(clinicId);
+  if (!staff.length) {
+    return { dr: 0, dh: 0, unset: t };
+  }
+  const dr = staff
+    .filter((s) => s.role === 'Dr')
+    .reduce((sum, s) => sum + Math.round(t * s.share), 0);
+  const dh = staff
+    .filter((s) => s.role === 'DH')
+    .reduce((sum, s) => sum + Math.round(t * s.share), 0);
+  const attributed = dr + dh;
+  if (attributed <= t) {
+    return { dr, dh, unset: t - attributed };
+  }
+  const scale = t / attributed;
+  const scaledDr = Math.round(dr * scale);
+  const scaledDh = Math.round(dh * scale);
+  const unset = Math.max(0, t - scaledDr - scaledDh);
+  return { dr: scaledDr, dh: scaledDh, unset };
+}
 
 const PERIOD_REVENUE_GOALS = {
   前日: 202000,
@@ -15,26 +109,12 @@ const PERIOD_REVENUE_GOALS = {
   今年: 33900000,
 };
 
-const SAKURA_STAFF_CHART_LABELS = ['田中 Dr', '佐藤 Dr', '鈴木 DH', '山田 DH', '未設定'];
-/** 医院売上に対する担当別シェア（dr-tanaka 0.4 + dr-sato 0.24 = Dr合計 0.64） */
-const SAKURA_STAFF_ROW_SHARES = [0.4, 0.24, 0.15, 0.14];
-const SAKURA_DR_STAFF_SHARE_SUM = 0.4 + 0.24;
-const SAKURA_DH_STAFF_SHARE_SUM = 0.15 + 0.14 + 0.11;
-const SAKURA_DA_STAFF_SHARE_SUM = 0.04 + 0.03;
+function getClinicIds() {
+  return getClinics().map((c) => c.id);
+}
 
-const HARBOR_CLINIC_WEIGHT = 0.44;
-const HARBOR_DR_STAFF_SHARE_SUM = 0.52;
-const HARBOR_DH_STAFF_SHARE_SUM = 0.28 + 0.14;
-
-const HARBOR_STAFF_CHART_LABELS = ['中村 Dr', '高橋 DH', '森 DH', '未設定'];
-const HARBOR_STAFF_ROW_SHARES = [0.52, 0.28, 0.14];
-
-function splitStaffSalesTotal(total) {
-  const t = Math.max(0, Math.round(total));
-  const dr = Math.round(t * STAFF_SALES_ROLE_RATIOS.dr);
-  const dh = Math.round(t * STAFF_SALES_ROLE_RATIOS.dh);
-  const unset = Math.max(0, t - dr - dh);
-  return { dr, dh, unset };
+function isClinicEntityKey(entityKey) {
+  return getClinicIds().includes(entityKey);
 }
 
 /** 日別合計を period の職種内訳比率で按分（トレンドチャート用） */
@@ -120,94 +200,640 @@ function parseAnchorDayFromSubtitle(subtitle) {
   return 23;
 }
 
-/**
- * 当月全日の日別売上（休診日・未来日は0、アンカー日は期間詳細と一致）
- * monthDetail: 今月の累計、anchorDetail: 前日/本日の確定値
- */
-function buildMonthlyDailyRevenueFromDetails(monthDetail, anchorDetail, weight = 1, options = {}) {
+const FACT_AGGREGATE_PERIODS = new Set(['本日', '前日', '今月']);
+let sakuraDailyFactsCache = null;
+
+function allocateDayScalars(monthTotal, fixedMap, throughDay, closedDays, weightFn) {
+  const fixedDays = new Set(fixedMap.keys());
+  let remaining = monthTotal;
+  fixedMap.forEach((v) => { remaining -= v; });
+  const dayMap = new Map(fixedMap);
+  const otherDays = [];
+  for (let d = 1; d <= throughDay; d++) {
+    if (closedDays.has(d) && !fixedDays.has(d)) continue;
+    if (fixedDays.has(d)) continue;
+    otherDays.push(d);
+  }
+  if (otherDays.length && remaining !== 0) {
+    const weights = otherDays.map(weightFn);
+    const wSum = weights.reduce((a, b) => a + b, 0) || 1;
+    const allocated = [];
+    otherDays.forEach((d, i) => {
+      const v = Math.round(remaining * (weights[i] / wSum));
+      allocated.push(v);
+      dayMap.set(d, v);
+    });
+    const diff = remaining - allocated.reduce((a, b) => a + b, 0);
+    if (diff !== 0) {
+      const last = otherDays[otherDays.length - 1];
+      dayMap.set(last, (dayMap.get(last) || 0) + diff);
+    }
+  }
+  return dayMap;
+}
+
+function allocateDayBreakdown(monthB, todayB, yesterdayB, throughDay, yesterdayDay, closedDays, weightFn) {
+  const fixedDays = new Set([throughDay]);
+  if (yesterdayDay != null && yesterdayDay >= 1 && yesterdayDay < throughDay) {
+    fixedDays.add(yesterdayDay);
+  }
+  const keys = ['insurance', 'selfPay', 'products', 'other'];
+  const dayMap = new Map();
+  dayMap.set(throughDay, {
+    insurance: todayB.insurance || 0,
+    selfPay: todayB.selfPay || 0,
+    products: todayB.products || 0,
+    other: todayB.other || 0,
+  });
+  if (fixedDays.has(yesterdayDay)) {
+    dayMap.set(yesterdayDay, {
+      insurance: yesterdayB.insurance || 0,
+      selfPay: yesterdayB.selfPay || 0,
+      products: yesterdayB.products || 0,
+      other: yesterdayB.other || 0,
+    });
+  }
+  const remaining = {};
+  keys.forEach((k) => {
+    remaining[k] = (monthB[k] || 0) - (todayB[k] || 0);
+    if (fixedDays.has(yesterdayDay)) remaining[k] -= yesterdayB[k] || 0;
+  });
+  const otherDays = [];
+  for (let d = 1; d <= throughDay; d++) {
+    if (closedDays.has(d) && !fixedDays.has(d)) continue;
+    if (fixedDays.has(d)) continue;
+    otherDays.push(d);
+  }
+  if (otherDays.length) {
+    const weights = otherDays.map(weightFn);
+    const wSum = weights.reduce((a, b) => a + b, 0) || 1;
+    const allocated = keys.reduce((acc, k) => ({ ...acc, [k]: [] }), {});
+    otherDays.forEach((d, i) => {
+      const entry = {};
+      keys.forEach((k) => {
+        const v = Math.round(remaining[k] * (weights[i] / wSum));
+        allocated[k].push(v);
+        entry[k] = v;
+      });
+      dayMap.set(d, entry);
+    });
+    const last = otherDays[otherDays.length - 1];
+    const lastEntry = dayMap.get(last);
+    keys.forEach((k) => {
+      const sum = allocated[k].reduce((a, b) => a + b, 0);
+      lastEntry[k] += remaining[k] - sum;
+    });
+  }
+  return dayMap;
+}
+
+function buildVisitingBreakdownAtTotal(monthDetail, total) {
+  const monthB = monthDetail?.patients?.visiting?.breakdown || {};
+  const monthT = monthDetail?.patients?.visiting?.total || sumVisitBreakdown(monthB);
+  if (monthT <= 0 || total <= 0) {
+    return { pureFirst: 0, first: 0, return: 0, other: 0 };
+  }
+  const ratio = total / monthT;
+  return reconcileVisitBreakdown({
+    pureFirst: Math.round(monthB.pureFirst * ratio),
+    first: Math.round(monthB.first * ratio),
+    return: Math.round(monthB.return * ratio),
+    other: Math.round(monthB.other * ratio),
+  }, total);
+}
+
+function allocateBlockScalars(monthBlock, todayBlock, yesterdayBlock, throughDay, yesterdayDay, closedDays, weightFn) {
+  const fixed = new Map();
+  fixed.set(throughDay, todayBlock);
+  if (yesterdayDay != null && yesterdayDay >= 1 && yesterdayDay < throughDay) {
+    fixed.set(yesterdayDay, yesterdayBlock);
+  }
+  return allocateDayScalars(monthBlock, fixed, throughDay, closedDays, weightFn);
+}
+
+function materializeClinicDailyFacts(clinicId = 'clinic-sakura') {
+  if (typeof MOCK_DATA === 'undefined') return [];
+  const month = MOCK_DATA.periodDetails['今月'];
+  const today = MOCK_DATA.periodDetails['本日'];
+  const yesterday = MOCK_DATA.periodDetails['前日'];
+  if (!month || !today || !yesterday) return [];
+
+  const closedDays = MONTHLY_CLOSED_DAYS;
+  const throughDay = parseAnchorDayFromSubtitle(today.subtitle);
+  const yesterdayDay = parseAnchorDayFromSubtitle(yesterday.subtitle);
+
+  const revMap = allocateDayBreakdown(
+    month.breakdown,
+    today.breakdown,
+    yesterday.breakdown,
+    throughDay,
+    yesterdayDay,
+    closedDays,
+    (d) => 0.85 + ((d * 37) % 28) / 28,
+  );
+  const visitMap = allocateDayScalars(
+    month.visits || 0,
+    new Map([[throughDay, today.visits || 0], [yesterdayDay, yesterday.visits || 0]]),
+    throughDay,
+    closedDays,
+    (d) => 0.85 + ((d * 11) % 9) / 9,
+  );
+  const visitingMap = allocateDayScalars(
+    month.patients?.visiting?.total || 0,
+    new Map([[throughDay, today.patients?.visiting?.total || 0], [yesterdayDay, yesterday.patients?.visiting?.total || 0]]),
+    throughDay,
+    closedDays,
+    (d) => 0.85 + ((d * 13) % 9) / 9,
+  );
+
+  const monthAppt = getAppointments(month);
+  const apptTotalMap = allocateDayScalars(
+    monthAppt.total,
+    new Map([[throughDay, getAppointments(today).total], [yesterdayDay, getAppointments(yesterday).total]]),
+    throughDay,
+    closedDays,
+    (d) => 0.85 + ((d * 11) % 9) / 9,
+  );
+  const utilSlotsMap = allocateBlockScalars(
+    month.utilization?.slots || 0,
+    today.utilization?.slots || 0,
+    yesterday.utilization?.slots || 0,
+    throughDay,
+    yesterdayDay,
+    closedDays,
+    (d) => 0.9 + ((d * 5) % 7) / 7,
+  );
+  const utilUsedMap = allocateBlockScalars(
+    month.utilization?.used || 0,
+    today.utilization?.used || 0,
+    yesterday.utilization?.used || 0,
+    throughDay,
+    yesterdayDay,
+    closedDays,
+    (d) => 0.9 + ((d * 5) % 7) / 7,
+  );
+  const recallTotalMap = allocateBlockScalars(
+    month.recall?.total || 0,
+    today.recall?.total || 0,
+    yesterday.recall?.total || 0,
+    throughDay,
+    yesterdayDay,
+    closedDays,
+    (d) => 0.88 + ((d * 7) % 9) / 9,
+  );
+  const qTotalMap = allocateBlockScalars(
+    month.questionnaire?.total || 0,
+    today.questionnaire?.total || 0,
+    yesterday.questionnaire?.total || 0,
+    throughDay,
+    yesterdayDay,
+    closedDays,
+    (d) => 0.88 + ((d * 7) % 9) / 9,
+  );
+
+  const facts = [];
+  for (let d = 1; d <= throughDay; d++) {
+    if (closedDays.has(d) && d !== throughDay && d !== yesterdayDay) continue;
+    const rev = revMap.get(d) || { insurance: 0, selfPay: 0, products: 0, other: 0 };
+    const total = (rev.insurance || 0) + (rev.selfPay || 0) + (rev.products || 0) + (rev.other || 0);
+    const outpatientVisits = visitMap.get(d) || 0;
+    let outpatientBreakdown;
+    if (d === throughDay) outpatientBreakdown = { ...getOutpatientBreakdown(today) };
+    else if (d === yesterdayDay) outpatientBreakdown = { ...getOutpatientBreakdown(yesterday) };
+    else outpatientBreakdown = buildVisitBreakdownAtTotal(month, outpatientVisits, 1);
+
+    const visitingTotal = visitingMap.get(d) || 0;
+    let visitingBreakdown;
+    if (d === throughDay) visitingBreakdown = { ...(today.patients?.visiting?.breakdown || {}) };
+    else if (d === yesterdayDay) visitingBreakdown = { ...(yesterday.patients?.visiting?.breakdown || {}) };
+    else visitingBreakdown = buildVisitingBreakdownAtTotal(month, visitingTotal);
+
+    let appointments;
+    if (d === throughDay) {
+      appointments = JSON.parse(JSON.stringify(getAppointments(today)));
+    } else if (d === yesterdayDay) {
+      appointments = JSON.parse(JSON.stringify(getAppointments(yesterday)));
+    } else {
+      const apptTotal = apptTotalMap.get(d) || 0;
+      appointments = {
+        total: apptTotal,
+        breakdown: splitAppointmentBreakdown(apptTotal, monthAppt.breakdown, 1),
+      };
+    }
+
+    const recallTotal = recallTotalMap.get(d) || 0;
+    const recallBreakdown = d === throughDay
+      ? { ...(today.recall?.breakdown || {}) }
+      : d === yesterdayDay
+        ? { ...(yesterday.recall?.breakdown || {}) }
+        : reconcileCountParts({
+          booked: Math.round((month.recall?.breakdown?.booked || 0) * (recallTotal / (month.recall?.total || 1))),
+          contact: Math.round((month.recall?.breakdown?.contact || 0) * (recallTotal / (month.recall?.total || 1))),
+          pending: Math.round((month.recall?.breakdown?.pending || 0) * (recallTotal / (month.recall?.total || 1))),
+        }, recallTotal);
+
+    const qTotal = qTotalMap.get(d) || 0;
+    const qBreakdown = d === throughDay
+      ? { ...(today.questionnaire?.breakdown || {}) }
+      : d === yesterdayDay
+        ? { ...(yesterday.questionnaire?.breakdown || {}) }
+        : reconcileCountParts({
+          done: Math.round((month.questionnaire?.breakdown?.done || 0) * (qTotal / (month.questionnaire?.total || 1))),
+          pending: Math.round((month.questionnaire?.breakdown?.pending || 0) * (qTotal / (month.questionnaire?.total || 1))),
+          partial: Math.round((month.questionnaire?.breakdown?.partial || 0) * (qTotal / (month.questionnaire?.total || 1))),
+        }, qTotal);
+
+    const slots = utilSlotsMap.get(d) || 0;
+    const used = Math.min(slots, utilUsedMap.get(d) || 0);
+
+    facts.push({
+      date: `2026-06-${String(d).padStart(2, '0')}`,
+      day: d,
+      clinicId,
+      breakdown: rebalanceBreakdown({ ...rev }, total),
+      total,
+      visits: outpatientVisits,
+      patients: {
+        outpatient: { breakdown: outpatientBreakdown },
+        visiting: { total: visitingTotal, breakdown: visitingBreakdown },
+      },
+      appointments,
+      utilization: { slots, used, empty: Math.max(0, slots - used) },
+      recall: { total: recallTotal, breakdown: recallBreakdown },
+      questionnaire: { total: qTotal, breakdown: qBreakdown },
+    });
+  }
+  return facts;
+}
+
+function getSakuraDailyFacts() {
+  if (!sakuraDailyFactsCache) sakuraDailyFactsCache = materializeClinicDailyFacts('clinic-sakura');
+  return sakuraDailyFactsCache;
+}
+
+function scaleDailyFact(fact, weight) {
+  const w = Number.isFinite(weight) ? weight : 1;
+  if (w === 1) return JSON.parse(JSON.stringify(fact));
+  const breakdown = rebalanceBreakdown({
+    insurance: scaleNum(fact.breakdown.insurance, w),
+    selfPay: scaleNum(fact.breakdown.selfPay, w),
+    products: scaleNum(fact.breakdown.products, w),
+    other: scaleNum(fact.breakdown.other, w),
+  }, scaleNum(fact.total, w));
+  const visits = Math.max(w >= 0.05 ? 1 : 0, scaleNum(fact.visits, w));
+  const outpatientBreakdown = buildVisitBreakdownAtTotal(
+    { visits, patients: { outpatient: { breakdown: fact.patients.outpatient.breakdown } } },
+    visits,
+    1,
+  );
+  const visitingTotal = scaleNum(fact.patients.visiting.total, w);
+  const visitingBreakdown = buildVisitingBreakdownAtTotal(
+    { patients: { visiting: { breakdown: fact.patients.visiting.breakdown, total: fact.patients.visiting.total } } },
+    visitingTotal,
+  );
+  const apptTotal = scaleNum(fact.appointments.total, w);
+  return {
+    ...fact,
+    breakdown,
+    total: breakdown.insurance + breakdown.selfPay + breakdown.products + breakdown.other,
+    visits,
+    patients: {
+      outpatient: { breakdown: outpatientBreakdown },
+      visiting: { total: visitingTotal, breakdown: visitingBreakdown },
+    },
+    appointments: {
+      total: apptTotal,
+      breakdown: splitAppointmentBreakdown(apptTotal, fact.appointments.breakdown, 1),
+    },
+    utilization: scaleUtilizationBlock(fact.utilization, w),
+    recall: scaleRecallBlock(fact.recall, w),
+    questionnaire: scaleQuestionnaireBlock(fact.questionnaire, w),
+  };
+}
+
+function mergeTwoDailyFacts(a, b) {
+  const breakdown = mergeBreakdownParts(a.breakdown, b.breakdown);
+  const total = (a.total || 0) + (b.total || 0);
+  const visits = (a.visits || 0) + (b.visits || 0);
+  const outB = {
+    pureFirst: (a.patients?.outpatient?.breakdown?.pureFirst || 0) + (b.patients?.outpatient?.breakdown?.pureFirst || 0),
+    first: (a.patients?.outpatient?.breakdown?.first || 0) + (b.patients?.outpatient?.breakdown?.first || 0),
+    return: (a.patients?.outpatient?.breakdown?.return || 0) + (b.patients?.outpatient?.breakdown?.return || 0),
+    other: (a.patients?.outpatient?.breakdown?.other || 0) + (b.patients?.outpatient?.breakdown?.other || 0),
+  };
+  const visB = {
+    pureFirst: (a.patients?.visiting?.breakdown?.pureFirst || 0) + (b.patients?.visiting?.breakdown?.pureFirst || 0),
+    first: (a.patients?.visiting?.breakdown?.first || 0) + (b.patients?.visiting?.breakdown?.first || 0),
+    return: (a.patients?.visiting?.breakdown?.return || 0) + (b.patients?.visiting?.breakdown?.return || 0),
+    other: (a.patients?.visiting?.breakdown?.other || 0) + (b.patients?.visiting?.breakdown?.other || 0),
+  };
+  const visitingTotal = (a.patients?.visiting?.total || 0) + (b.patients?.visiting?.total || 0);
+  const apptA = a.appointments || { total: 0, breakdown: {} };
+  const apptB = b.appointments || { total: 0, breakdown: {} };
+  const apptTotal = (apptA.total || 0) + (apptB.total || 0);
+  return {
+    date: a.date,
+    day: a.day,
+    clinicId: 'all',
+    breakdown: rebalanceBreakdown(breakdown, total),
+    total,
+    visits,
+    patients: {
+      outpatient: { breakdown: reconcileVisitBreakdown(outB, visits) },
+      visiting: { total: visitingTotal, breakdown: reconcileVisitBreakdown(visB, visitingTotal) },
+    },
+    appointments: {
+      total: apptTotal,
+      breakdown: reconcileCountParts({
+        visited: (apptA.breakdown?.visited || 0) + (apptB.breakdown?.visited || 0),
+        notVisited: (apptA.breakdown?.notVisited || 0) + (apptB.breakdown?.notVisited || 0),
+        cancelled: (apptA.breakdown?.cancelled || 0) + (apptB.breakdown?.cancelled || 0),
+        noShow: (apptA.breakdown?.noShow || 0) + (apptB.breakdown?.noShow || 0),
+      }, apptTotal),
+    },
+    utilization: mergeUtilizationBlocks(a.utilization, b.utilization),
+    recall: mergeRecallBlocks(a.recall, b.recall),
+    questionnaire: mergeQuestionnaireBlocks(a.questionnaire, b.questionnaire),
+  };
+}
+
+function getDailyFacts(entityKey = 'clinic-sakura', weight = 1) {
+  const base = getSakuraDailyFacts();
+  if (entityKey === 'all') {
+    const clinics = getClinics();
+    if (!clinics.length) return base.map((f) => scaleDailyFact(f, weight));
+    const byDay = new Map();
+    clinics.forEach((clinic) => {
+      const w = getClinicRevenueWeight(clinic.id) * weight;
+      base.forEach((fact) => {
+        const scaled = scaleDailyFact(fact, w);
+        const prev = byDay.get(fact.day);
+        byDay.set(fact.day, prev ? mergeTwoDailyFacts(prev, scaled) : scaled);
+      });
+    });
+    return Array.from(byDay.values()).sort((a, b) => a.day - b.day);
+  }
+  const clinicWeight = entityKey === 'clinic-sakura'
+    ? weight
+    : (ENTITY_WEIGHTS[entityKey] ?? getClinicRevenueWeight(entityKey)) * weight;
+  return base.map((f) => scaleDailyFact(f, clinicWeight));
+}
+
+function filterFactsByPeriod(facts, periodKey) {
+  if (typeof MOCK_DATA === 'undefined') return facts;
+  const throughDay = parseAnchorDayFromSubtitle(MOCK_DATA.periodDetails['本日']?.subtitle);
+  const yesterdayDay = parseAnchorDayFromSubtitle(MOCK_DATA.periodDetails['前日']?.subtitle);
+  if (periodKey === '本日') return facts.filter((f) => f.day === throughDay);
+  if (periodKey === '前日') return facts.filter((f) => f.day === yesterdayDay);
+  if (periodKey === '今月') return facts.filter((f) => f.day >= 1 && f.day <= throughDay);
+  return facts;
+}
+
+function aggregateDailyFacts(facts) {
+  if (!facts?.length) {
+    return {
+      breakdown: { insurance: 0, selfPay: 0, products: 0, other: 0 },
+      total: 0,
+      visits: 0,
+      patients: {
+        outpatient: { breakdown: { pureFirst: 0, first: 0, return: 0, other: 0 } },
+        visiting: { total: 0, breakdown: { pureFirst: 0, first: 0, return: 0, other: 0 } },
+      },
+      appointments: { total: 0, breakdown: { visited: 0, notVisited: 0, cancelled: 0, noShow: 0 } },
+      utilization: { slots: 0, used: 0, empty: 0 },
+      recall: { total: 0, breakdown: { booked: 0, contact: 0, pending: 0 } },
+      questionnaire: { total: 0, breakdown: { done: 0, pending: 0, partial: 0 } },
+    };
+  }
+  return facts.slice(1).reduce(
+    (acc, fact) => mergeTwoDailyFacts(acc, fact),
+    JSON.parse(JSON.stringify(facts[0])),
+  );
+}
+
+function overlayAggregateOnPeriodDetail(detail, agg) {
+  const next = JSON.parse(JSON.stringify(detail));
+  next.total = agg.total;
+  next.visits = agg.visits;
+  next.breakdown = rebalanceBreakdown(agg.breakdown, agg.total);
+  next.patients = JSON.parse(JSON.stringify(agg.patients));
+  next.appointments = JSON.parse(JSON.stringify(agg.appointments));
+  next.utilization = {
+    slots: agg.utilization.slots,
+    used: agg.utilization.used,
+    empty: Math.max(0, agg.utilization.slots - agg.utilization.used),
+  };
+  next.recall = JSON.parse(JSON.stringify(agg.recall));
+  next.questionnaire = JSON.parse(JSON.stringify(agg.questionnaire));
+  if (next.insights) {
+    next.insights = next.insights.map((item) => {
+      const row = { ...item };
+      if (item.label === '患者単価' && next.visits > 0) {
+        row.value = formatYenValue(Math.round(next.total / next.visits));
+      }
+      if (item.label === '自費率' && next.total > 0) {
+        row.value = String(calcSelfPayRatePct(next.breakdown, next.total));
+      }
+      return row;
+    });
+  }
+  return next;
+}
+
+function resolveDailyFactsForChart(options = {}, entityKey = 'clinic-sakura', weight = 1) {
+  if (options.dailyFacts) return options.dailyFacts;
+  return getDailyFacts(options.entityKey || entityKey, weight);
+}
+
+function buildDailyRevenueSeriesFromFacts(facts, options = {}, weight = 1) {
   const daysInMonth = options.daysInMonth || MONTH_DAYS_IN_MONTH;
   const closedDays = options.closedDays || MONTHLY_CLOSED_DAYS;
   const monthPrefix = options.monthPrefix || MONTH_DAY_LABEL_PREFIX;
-  const anchorDay = options.anchorDay ?? parseAnchorDayFromSubtitle(anchorDetail?.subtitle);
-
-  const monthB = monthDetail?.breakdown || {};
-  const anchorB = anchorDetail?.breakdown || {};
-
-  const openDaysThroughAnchor = [];
-  for (let d = 1; d <= anchorDay; d++) {
-    if (!closedDays.has(d) || d === anchorDay) openDaysThroughAnchor.push(d);
-  }
-  const otherDays = openDaysThroughAnchor.filter((d) => d !== anchorDay);
-
-  const remaining = {
-    insurance: (monthB.insurance || 0) - (anchorB.insurance || 0),
-    selfPay: (monthB.selfPay || 0) - (anchorB.selfPay || 0),
-    products: (monthB.products || 0) - (anchorB.products || 0),
-  };
-
-  const dayMap = new Map();
-  dayMap.set(anchorDay, {
-    insurance: anchorB.insurance || 0,
-    selfPay: anchorB.selfPay || 0,
-    products: anchorB.products || 0,
-  });
-
-  if (otherDays.length) {
-    const weights = otherDays.map((d) => 0.85 + ((d * 37) % 28) / 28);
-    const wSum = weights.reduce((a, b) => a + b, 0) || 1;
-    otherDays.forEach((d, i) => {
-      const w = weights[i] / wSum;
-      dayMap.set(d, {
-        insurance: Math.round(remaining.insurance * w),
-        selfPay: Math.round(remaining.selfPay * w),
-        products: Math.round(remaining.products * w),
-      });
-    });
-    const last = otherDays[otherDays.length - 1];
-    const allocated = { insurance: 0, selfPay: 0, products: 0 };
-    otherDays.forEach((d) => {
-      const v = dayMap.get(d);
-      allocated.insurance += v.insurance;
-      allocated.selfPay += v.selfPay;
-      allocated.products += v.products;
-    });
-    const lastEntry = dayMap.get(last);
-    lastEntry.insurance += remaining.insurance - allocated.insurance;
-    lastEntry.selfPay += remaining.selfPay - allocated.selfPay;
-    lastEntry.products += remaining.products - allocated.products;
-  }
-
+  const throughDay = options.throughDay ?? parseAnchorDayFromSubtitle(
+    (options.todayDetail || MOCK_DATA?.periodDetails?.['本日'])?.subtitle,
+  );
+  const factByDay = new Map(facts.map((f) => [f.day, f]));
   const labels = [];
   const insurance = [];
   const selfPay = [];
   const products = [];
-
   for (let d = 1; d <= daysInMonth; d++) {
     labels.push(`${monthPrefix}${d}`);
-    const isFuture = d > anchorDay;
-    const isClosed = closedDays.has(d) && d !== anchorDay;
-    if (isFuture || isClosed) {
+    const fact = factByDay.get(d);
+    const isFuture = d > throughDay;
+    const isClosed = closedDays.has(d) && !fact;
+    if (isFuture || isClosed || !fact) {
       insurance.push(0);
       selfPay.push(0);
       products.push(0);
       continue;
     }
-    const v = dayMap.get(d) || { insurance: 0, selfPay: 0, products: 0 };
-    insurance.push(Math.round(v.insurance * weight));
-    selfPay.push(Math.round(v.selfPay * weight));
-    products.push(Math.round(v.products * weight));
+    insurance.push(Math.round(fact.breakdown.insurance * weight));
+    selfPay.push(Math.round(fact.breakdown.selfPay * weight));
+    products.push(Math.round(fact.breakdown.products * weight));
   }
-
   return { labels, insurance, selfPay, products };
 }
 
-function buildMonthlyDailyStaffSalesFromDetails(monthDetail, anchorDetail, weight = 1, options = {}) {
-  const daily = buildMonthlyDailyRevenueFromDetails(monthDetail, anchorDetail, weight, options);
+function buildDailyVisitSeriesFromFacts(facts, options = {}, weight = 1) {
+  const daysInMonth = options.daysInMonth || MONTH_DAYS_IN_MONTH;
+  const closedDays = options.closedDays || MONTHLY_CLOSED_DAYS;
+  const monthPrefix = options.monthPrefix || MONTH_DAY_LABEL_PREFIX;
+  const throughDay = options.throughDay ?? parseAnchorDayFromSubtitle(
+    (options.todayDetail || MOCK_DATA?.periodDetails?.['本日'])?.subtitle,
+  );
+  const factByDay = new Map(facts.map((f) => [f.day, f]));
+  const labels = [];
+  const pureFirst = [];
+  const first = [];
+  const returnV = [];
+  const other = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    labels.push(`${monthPrefix}${d}`);
+    const fact = factByDay.get(d);
+    const isFuture = d > throughDay;
+    const isClosed = closedDays.has(d) && !fact;
+    if (isFuture || isClosed || !fact) {
+      pureFirst.push(0);
+      first.push(0);
+      returnV.push(0);
+      other.push(0);
+      continue;
+    }
+    const b = fact.patients.outpatient.breakdown;
+    pureFirst.push(Math.round(b.pureFirst * weight));
+    first.push(Math.round(b.first * weight));
+    returnV.push(Math.round(b.return * weight));
+    other.push(Math.round(b.other * weight));
+  }
+  return { labels, pureFirst, first, return: returnV, other };
+}
+
+function buildDailyAppointmentSeriesFromFacts(facts, options = {}, weight = 1) {
+  const visitDaily = buildDailyVisitSeriesFromFacts(facts, options, weight);
+  const factByDay = new Map(facts.map((f) => [f.day, f]));
+  const visited = [];
+  const notVisited = [];
+  const cancelSameDay = [];
+  const cancelAdvance = [];
+  const noShow = [];
+  const cancelled = [];
+  visitDaily.labels.forEach((label, i) => {
+    const day = i + 1;
+    const fact = factByDay.get(day);
+    if (!fact) {
+      visited.push(0);
+      notVisited.push(0);
+      cancelSameDay.push(0);
+      cancelAdvance.push(0);
+      noShow.push(0);
+      cancelled.push(0);
+      return;
+    }
+    const b = normalizeAppointmentBreakdown(fact.appointments.breakdown);
+    visited.push(Math.round(b.visited * weight));
+    notVisited.push(Math.round(b.notVisited * weight));
+    cancelSameDay.push(Math.round(b.cancelSameDay * weight));
+    cancelAdvance.push(Math.round(b.cancelAdvance * weight));
+    noShow.push(Math.round(b.noShow * weight));
+    cancelled.push(Math.round(b.cancelled * weight));
+  });
+  return {
+    labels: visitDaily.labels, visited, notVisited, cancelSameDay, cancelAdvance, noShow, cancelled,
+  };
+}
+
+/**
+ * 当月全日の日別売上（日次ファクトから読み取り。合計は期間集計の正本）
+ */
+function buildMonthlyDailyRevenueFromDetails(monthDetail, periodDetail, weight = 1, options = {}) {
+  const facts = resolveDailyFactsForChart(options, options.entityKey || 'clinic-sakura', weight);
+  return buildDailyRevenueSeriesFromFacts(facts, options, weight);
+}
+
+function maxDailyTotalFromRevenueDaily(daily, throughDay = null) {
+  if (!daily?.labels?.length) return 1;
+  const limit = throughDay != null
+    ? Math.min(Math.max(1, throughDay), daily.labels.length)
+    : daily.labels.length;
+  let max = 1;
+  for (let i = 0; i < limit; i++) {
+    const total = (daily.insurance?.[i] || 0) + (daily.selfPay?.[i] || 0) + (daily.products?.[i] || 0);
+    if (total > max) max = total;
+  }
+  return max;
+}
+
+function maxDailyTotalFromStackedSeries(labels, series, throughDay = null) {
+  if (!labels?.length) return 1;
+  const limit = throughDay != null
+    ? Math.min(Math.max(1, throughDay), labels.length)
+    : labels.length;
+  let max = 1;
+  for (let i = 0; i < limit; i++) {
+    const total = (series || []).reduce((sum, s) => sum + (s.values?.[i] || 0), 0);
+    if (total > max) max = total;
+  }
+  return max;
+}
+
+function resolveInsightDailyThroughDay(metricsContext) {
+  const ctx = metricsContext || { entityKey: 'clinic-sakura' };
+  const todayDetail = typeof resolvePeriodDetail === 'function'
+    ? resolvePeriodDetail('本日', ctx)
+    : MOCK_DATA.periodDetails['本日'];
+  return typeof parseAnchorDayFromSubtitle === 'function'
+    ? parseAnchorDayFromSubtitle(todayDetail?.subtitle)
+    : 23;
+}
+
+/**
+ * 日別チャートのY軸上限（1日〜本日までの表示データの最大値）
+ */
+function resolveMonthlyDailyYAxisMax(metricsContext, weight = 1) {
+  const ctx = metricsContext || { entityKey: 'clinic-sakura', weight };
+  const throughDay = resolveInsightDailyThroughDay(ctx);
+  const facts = getDailyFacts(ctx.entityKey || 'clinic-sakura', weight);
+  const daily = buildDailyRevenueSeriesFromFacts(facts, { throughDay }, weight);
+  return maxDailyTotalFromRevenueDaily(daily, throughDay);
+}
+
+/** 日別来院チャートのY軸上限（1日〜本日までの表示データの最大値） */
+function resolveMonthlyDailyVisitYAxisMax(metricsContext, weight = 1) {
+  const ctx = metricsContext || { entityKey: 'clinic-sakura', weight };
+  const throughDay = resolveInsightDailyThroughDay(ctx);
+  const facts = getDailyFacts(ctx.entityKey || 'clinic-sakura', weight);
+  const daily = buildDailyVisitSeriesFromFacts(facts, { throughDay }, weight);
+  return maxDailyTotalFromStackedSeries(daily.labels, [
+    { values: daily.pureFirst },
+    { values: daily.first },
+    { values: daily.return },
+    { values: daily.other },
+  ], throughDay);
+}
+
+/** 日別予約チャートのY軸上限 */
+function resolveMonthlyDailyAppointmentYAxisMax(metricsContext, weight = 1) {
+  const ctx = metricsContext || { entityKey: 'clinic-sakura', weight };
+  const throughDay = resolveInsightDailyThroughDay(ctx);
+  const facts = getDailyFacts(ctx.entityKey || 'clinic-sakura', weight);
+  const daily = buildDailyAppointmentSeriesFromFacts(facts, { throughDay }, weight);
+  return maxDailyTotalFromStackedSeries(daily.labels, [
+    { values: daily.visited },
+    { values: daily.notVisited },
+    { values: daily.cancelled },
+    { values: daily.noShow },
+  ], throughDay);
+}
+
+function buildMonthlyDailyStaffSalesFromDetails(monthDetail, periodDetail, weight = 1, options = {}) {
+  const daily = buildMonthlyDailyRevenueFromDetails(monthDetail, periodDetail, weight, options);
   const totals = daily.labels.map((_, i) =>
     (daily.insurance[i] || 0) + (daily.selfPay[i] || 0) + (daily.products[i] || 0),
   );
   const entityKey = options.entityKey || 'clinic-sakura';
-  const split = splitStaffTotalsFromDetail(anchorDetail, entityKey, totals);
+  const splitDetail = options.splitDetail || options.todayDetail || periodDetail;
+  const split = splitStaffTotalsFromDetail(splitDetail, entityKey, totals);
   return { labels: daily.labels, ...split };
 }
 
@@ -270,18 +896,383 @@ function getPatientTotals(detail) {
   };
 }
 
+function normalizeAppointmentBreakdown(b) {
+  if (!b) {
+    return { visited: 0, notVisited: 0, cancelSameDay: 0, cancelAdvance: 0, noShow: 0, cancelled: 0 };
+  }
+  const cancelSameDay = b.cancelSameDay ?? Math.round((b.cancelled || 0) * 0.5);
+  const cancelAdvance = b.cancelAdvance ?? Math.max(0, (b.cancelled || 0) - cancelSameDay);
+  const noShow = b.noShow || 0;
+  return {
+    visited: b.visited || 0,
+    notVisited: b.notVisited || 0,
+    cancelSameDay,
+    cancelAdvance,
+    noShow,
+    cancelled: cancelSameDay + cancelAdvance + noShow,
+  };
+}
+
 function getAppointments(detail) {
   const stored = detail?.appointments;
   if (stored?.breakdown) {
-    const b = stored.breakdown;
-    const total = stored.total ?? (b.visited + b.notVisited + b.cancelled + b.noShow);
-    return { total, breakdown: { ...b } };
+    const b = normalizeAppointmentBreakdown(stored.breakdown);
+    const total = stored.total ?? (b.visited + b.notVisited + b.cancelled);
+    return { total, breakdown: b };
   }
   const outpatient = detail?.visits ?? 0;
   return {
     total: outpatient,
-    breakdown: { visited: outpatient, notVisited: 0, cancelled: 0, noShow: 0 },
+    breakdown: normalizeAppointmentBreakdown({ visited: outpatient, notVisited: 0, cancelled: 0, noShow: 0 }),
   };
+}
+
+function parseYenAmount(val) {
+  if (typeof val === 'number') return Math.round(val);
+  if (!val) return 0;
+  return Math.round(Number(String(val).replace(/[¥,\s]/g, '')) || 0);
+}
+
+function scaleCountBreakdown(breakdown, weight, totalHint) {
+  const scaled = {
+    booked: Math.max(0, scaleNum(breakdown.booked ?? breakdown.done ?? 0, weight)),
+    contact: Math.max(0, scaleNum(breakdown.contact ?? 0, weight)),
+    pending: Math.max(0, scaleNum(breakdown.pending ?? 0, weight)),
+    done: Math.max(0, scaleNum(breakdown.done ?? breakdown.booked ?? 0, weight)),
+    partial: Math.max(0, scaleNum(breakdown.partial ?? 0, weight)),
+    visited: Math.max(0, scaleNum(breakdown.visited ?? 0, weight)),
+    notVisited: Math.max(0, scaleNum(breakdown.notVisited ?? 0, weight)),
+    cancelled: Math.max(0, scaleNum(breakdown.cancelled ?? 0, weight)),
+    noShow: Math.max(0, scaleNum(breakdown.noShow ?? 0, weight)),
+  };
+  const total = totalHint != null
+    ? Math.max(0, scaleNum(totalHint, weight))
+    : Math.max(0, scaleNum(breakdown.total, weight));
+  return { scaled, total };
+}
+
+function reconcileCountParts(parts, total) {
+  const t = Math.max(0, Math.round(total));
+  const keys = Object.keys(parts);
+  const next = {};
+  keys.forEach((k) => { next[k] = Math.max(0, Math.round(parts[k] || 0)); });
+  let sum = keys.reduce((s, k) => s + next[k], 0);
+  if (sum !== t && keys.length) {
+    const last = keys[keys.length - 1];
+    next[last] = Math.max(0, next[last] + (t - sum));
+  }
+  return next;
+}
+
+function scaleUtilizationBlock(block, weight) {
+  if (!block) {
+    const slots = Math.max(1, scaleNum(40, weight));
+    const used = Math.max(0, scaleNum(31, weight));
+    return { slots, used, empty: Math.max(0, slots - used) };
+  }
+  const slots = Math.max(1, scaleNum(block.slots, weight));
+  const used = Math.max(0, scaleNum(block.used, weight));
+  let empty = Math.max(0, scaleNum(block.empty ?? (block.slots - block.used), weight));
+  if (used + empty !== slots) empty = Math.max(0, slots - used);
+  return { slots, used, empty };
+}
+
+function getUtilizationRatePct(util) {
+  if (!util?.slots) return 0;
+  return Math.round((util.used / util.slots) * 1000) / 10;
+}
+
+function scaleRecallBlock(block, weight) {
+  if (!block?.breakdown) {
+    return {
+      total: Math.max(0, scaleNum(142, weight)),
+      breakdown: { booked: 105, contact: 22, pending: 15 },
+    };
+  }
+  const total = Math.max(0, scaleNum(block.total, weight));
+  const b = reconcileCountParts({
+    booked: scaleNum(block.breakdown.booked, weight),
+    contact: scaleNum(block.breakdown.contact, weight),
+    pending: scaleNum(block.breakdown.pending, weight),
+  }, total);
+  return { total, breakdown: b };
+}
+
+function scaleQuestionnaireBlock(block, weight) {
+  if (!block?.breakdown) {
+    return {
+      total: Math.max(0, scaleNum(29, weight)),
+      breakdown: { done: 24, pending: 3, partial: 2 },
+    };
+  }
+  const total = Math.max(0, scaleNum(block.total, weight));
+  const b = reconcileCountParts({
+    done: scaleNum(block.breakdown.done, weight),
+    pending: scaleNum(block.breakdown.pending, weight),
+    partial: scaleNum(block.breakdown.partial, weight),
+  }, total);
+  return { total, breakdown: b };
+}
+
+function getUtilization(detail) {
+  const util = scaleUtilizationBlock(detail?.utilization, 1);
+  return { ...util, ratePct: getUtilizationRatePct(util) };
+}
+
+function getRecall(detail) {
+  const stored = detail?.recall;
+  if (!stored?.breakdown) {
+    return scaleRecallBlock(null, 1);
+  }
+  const total = stored.total ?? sumVisitBreakdown({
+    pureFirst: stored.breakdown.booked,
+    first: stored.breakdown.contact,
+    return: 0,
+    other: stored.breakdown.pending,
+  });
+  const breakdown = reconcileCountParts(stored.breakdown, total);
+  return { total, breakdown };
+}
+
+function getQuestionnaire(detail) {
+  const stored = detail?.questionnaire;
+  if (!stored?.breakdown) {
+    return scaleQuestionnaireBlock(null, 1);
+  }
+  const b = { done: stored.breakdown.done || 0, pending: stored.breakdown.pending || 0 };
+  const total = stored.total ?? (b.done + b.pending);
+  const breakdown = reconcileCountParts(b, total);
+  return { total, breakdown };
+}
+
+function getQuestionnaireDoneRatePct(q) {
+  if (!q?.total) return 0;
+  return Math.round(((q.breakdown?.done || 0) / q.total) * 1000) / 10;
+}
+
+function getRecallBookedRatePct(r) {
+  if (!r?.total) return 0;
+  return Math.round(((r.breakdown?.booked || 0) / r.total) * 1000) / 10;
+}
+
+function daysUntil(dateStr, anchorDate = '2026-06-23') {
+  const a = new Date(anchorDate);
+  const b = new Date(dateStr);
+  return Math.round((b - a) / (1000 * 60 * 60 * 24));
+}
+
+function computePatientRiskScore(patient, anchorDate = '2026-06-23') {
+  let score = 0;
+  const c6 = patient.past6mCancels || 0;
+  if (c6 >= 3) score += 40;
+  else if (c6 === 2) score += 30;
+  else if (c6 === 1) score += 15;
+  const rate6 = patient.past6mTotalAppts > 0
+    ? (c6 / patient.past6mTotalAppts) * 100 : 0;
+  if (rate6 >= 30) score += 30;
+  else if (rate6 >= 20) score += 20;
+  else if (rate6 >= 10) score += 10;
+  score += Math.min(20, (patient.past6mNoShows || 0) * 20);
+  if (patient.nextAppt) {
+    const d = daysUntil(patient.nextAppt, anchorDate);
+    if (d <= 7) score += 10;
+    else if (d >= 8) score += 5;
+  }
+  let level = '低';
+  if (score >= 80) level = '高';
+  else if (score >= 50) level = '中';
+  return { score, level };
+}
+
+function getAtRiskPatientList() {
+  const raw = MOCK_DATA?.atRiskPatients || [];
+  return raw
+    .filter((p) => p.nextAppt && (p.past6mCancels || 0) >= 1)
+    .map((p) => {
+      const risk = computePatientRiskScore(p);
+      const cancelRate = p.totalAppts > 0
+        ? Math.round((p.cancelPastYear / p.totalAppts) * 1000) / 10 : 0;
+      return { ...p, riskScore: risk.score, riskLevel: risk.level, cancelRate };
+    })
+    .sort((a, b) => b.riskScore - a.riskScore);
+}
+
+function getQuestionnaireSurveys(clinicId = 'clinic-sakura') {
+  const byClinic = MOCK_DATA?.questionnaireSurveys?.[clinicId];
+  if (byClinic?.length) return byClinic;
+  const legacy = MOCK_DATA?.questionnaireSurvey;
+  return legacy ? [legacy] : [];
+}
+
+function getSelfPayItemColorMap() {
+  const treatments = MOCK_DATA?.selfPayTreatments || [];
+  const colors = ['#ec4899', '#f472b6', '#db2777', '#a855f7', '#06b6d4', '#14b8a6', '#0891b2', '#94a3b8'];
+  const map = { その他: '#94a3b8' };
+  treatments.forEach((t, i) => { map[t.label] = colors[i % colors.length]; });
+  return map;
+}
+
+function colorForSelfPayStaff(label) {
+  const itemMap = MOCK_DATA?.selfPayStaffItems || {};
+  const colorMap = getSelfPayItemColorMap();
+  const item = itemMap[label] || 'その他';
+  return colorMap[item] || '#94a3b8';
+}
+
+function buildTopSelfPaySegments(detail) {
+  const treatments = MOCK_DATA?.selfPayTreatments || [];
+  const selfTotal = Math.max(0, Math.round(detail?.breakdown?.selfPay || 0));
+  const baseSum = treatments.reduce((s, t) => s + t.amount, 0) || 1;
+  const scale = selfTotal / baseSum;
+  const sorted = [...treatments].sort((a, b) => b.amount - a.amount);
+  const top4 = sorted.slice(0, 4);
+  const colors = ['#ec4899', '#f472b6', '#db2777', '#a855f7', '#94a3b8'];
+  const segments = top4.map((t, i) => ({
+    label: t.label,
+    value: Math.round(t.amount * scale),
+    color: colors[i],
+    rateMuted: true,
+  }));
+  const topSum = segments.reduce((s, x) => s + x.value, 0);
+  segments.push({ label: 'その他', value: Math.max(0, selfTotal - topSum), color: colors[4] });
+  return { segments, total: selfTotal };
+}
+
+function buildSelfPayStaffRanking(detail, total) {
+  const entityKey = 'clinic-sakura';
+  const breakdown = typeof getStaffSalesBreakdown === 'function'
+    ? getStaffSalesBreakdown(detail, entityKey)
+    : splitStaffSalesTotal(total, entityKey);
+  const chart = typeof getReconciledStaffSalesChart === 'function'
+    ? getReconciledStaffSalesChart(detail, entityKey)
+    : null;
+  const colors = ['#ec4899', '#f472b6', '#db2777', '#06b6d4', '#14b8a6', '#0891b2', '#94a3b8'];
+  const items = [];
+  if (chart?.labels?.length) {
+    chart.labels.forEach((label, i) => {
+      const val = Math.round(((chart.selfPay?.[i] || 0) + (chart.insurance?.[i] || 0)) * 0.35);
+      if (val <= 0) return;
+      const role = typeof staffChartRowRole === 'function' ? staffChartRowRole(label) : 'dh';
+      if (role === 'dr' || role === 'dh') {
+        items.push({
+          label: typeof mapStaffChartLabelToName === 'function' ? mapStaffChartLabelToName(label) : label,
+          value: val,
+          color: colors[items.length % colors.length],
+        });
+      }
+    });
+  }
+  if (breakdown.unset > 0) {
+    items.push({ label: '未設定', value: Math.round(breakdown.unset * 0.35), color: colorForSelfPayStaff('未設定') });
+  }
+  if (!items.length) {
+    return [
+      { label: '田中 健一', value: Math.round(total * 0.28), color: colorForSelfPayStaff('田中 健一') },
+      { label: '鈴木 美咲', value: Math.round(total * 0.22), color: colorForSelfPayStaff('鈴木 美咲') },
+      { label: '山田 恵', value: Math.round(total * 0.18), color: colorForSelfPayStaff('山田 恵') },
+      { label: '未設定', value: Math.round(total * 0.12), color: colorForSelfPayStaff('未設定') },
+    ];
+  }
+  return items.map((it) => ({
+    ...it,
+    color: colorForSelfPayStaff(it.label),
+  }));
+}
+
+function buildDailyUtilizationSeries(metricsContext, weight = 1) {
+  const facts = getDailyFacts(metricsContext?.entityKey || 'clinic-sakura', weight);
+  const throughDay = resolveInsightDailyThroughDay(metricsContext);
+  const labels = [];
+  const values = [];
+  facts.filter((f) => f.day <= throughDay).forEach((f) => {
+    const slots = f.utilization?.slots || 0;
+    const used = f.utilization?.used || 0;
+    labels.push(`${MONTH_DAY_LABEL_PREFIX}${f.day}`);
+    values.push(slots > 0 ? Math.round((used / slots) * 1000) / 10 : 0);
+  });
+  return { labels, values };
+}
+
+function calcRemainingBookingsForGoal(util, goalPct = 82) {
+  const slots = util?.slots || 0;
+  const used = util?.used || 0;
+  const targetUsed = Math.ceil(slots * (goalPct / 100));
+  return Math.max(0, targetUsed - used);
+}
+
+function getPaymentRecord(detail) {
+  const total = detail?.total || 0;
+  const cashflow = detail?.cashflow || [];
+  const receivablesRow = cashflow.find((r) => r.label === '未収金');
+  const selfPayRow = cashflow.find((r) => r.label === '自費未収');
+  const rateRow = cashflow.find((r) => String(r.label || '').includes('入金率'));
+  const receivables = parseYenAmount(receivablesRow?.value);
+  const selfPayReceivables = parseYenAmount(selfPayRow?.value);
+  const collected = Math.max(0, total - receivables);
+  const collectionRate = rateRow
+    ? parseFloat(String(rateRow.value)) || 0
+    : (total > 0 ? Math.round((collected / total) * 1000) / 10 : 0);
+  return { total, receivables, collected, selfPayReceivables, collectionRate };
+}
+
+/** 既にスケール済み detail 向け — weight を掛けない */
+function buildInsightCountFromParts(totalValue, parts) {
+  const total = Math.max(0, Math.round(totalValue));
+  const segments = parts.map((p) => ({ ...p, value: Math.max(0, Math.round(p.value)) }));
+  const sum = segments.reduce((s, p) => s + p.value, 0);
+  if (sum !== total && segments.length > 0) {
+    segments[segments.length - 1].value = Math.max(0, segments[segments.length - 1].value + (total - sum));
+  }
+  return { total, segments };
+}
+
+function scaleCountsToTotal(baseCounts, targetTotal) {
+  const baseSum = baseCounts.reduce((s, v) => s + v, 0) || 1;
+  const target = Math.max(0, Math.round(targetTotal));
+  const scaled = baseCounts.map((v) => Math.max(0, Math.round((v / baseSum) * target)));
+  const diff = target - scaled.reduce((a, b) => a + b, 0);
+  if (diff !== 0 && scaled.length) scaled[scaled.length - 1] += diff;
+  return scaled;
+}
+
+function distributeByPattern(total, pattern) {
+  return scaleCountsToTotal(pattern, total);
+}
+
+function buildSelfPayMenuAmounts(detail) {
+  const selfTotal = Math.max(0, Math.round((detail?.breakdown?.selfPay) || 0));
+  const implant = Math.max(0, Math.round(selfTotal * 0.28));
+  const ortho = Math.max(0, Math.round(selfTotal * 0.24));
+  const whitening = Math.max(0, Math.round(selfTotal * 0.18));
+  const other = Math.max(0, selfTotal - implant - ortho - whitening);
+  return { implant, ortho, whitening, other, total: selfTotal };
+}
+
+function mergeUtilizationBlocks(a, b) {
+  const slots = (a?.slots || 0) + (b?.slots || 0);
+  const used = (a?.used || 0) + (b?.used || 0);
+  const empty = Math.max(0, slots - used);
+  return { slots, used, empty };
+}
+
+function mergeRecallBlocks(a, b) {
+  const total = (a?.total || 0) + (b?.total || 0);
+  const breakdown = reconcileCountParts({
+    booked: (a?.breakdown?.booked || 0) + (b?.breakdown?.booked || 0),
+    contact: (a?.breakdown?.contact || 0) + (b?.breakdown?.contact || 0),
+    pending: (a?.breakdown?.pending || 0) + (b?.breakdown?.pending || 0),
+  }, total);
+  return { total, breakdown };
+}
+
+function mergeQuestionnaireBlocks(a, b) {
+  const total = (a?.total || 0) + (b?.total || 0);
+  const breakdown = reconcileCountParts({
+    done: (a?.breakdown?.done || 0) + (b?.breakdown?.done || 0),
+    pending: (a?.breakdown?.pending || 0) + (b?.breakdown?.pending || 0),
+    partial: (a?.breakdown?.partial || 0) + (b?.breakdown?.partial || 0),
+  }, total);
+  return { total, breakdown };
 }
 
 function scaleVisitBreakdown(breakdown, weight) {
@@ -357,89 +1348,9 @@ function splitVisitBreakdownSeries(totals, detail, weight = 1) {
   return { pureFirst, first, return: returnV, other };
 }
 
-function buildMonthlyDailyVisitBreakdownFromDetails(monthDetail, anchorDetail, weight = 1, options = {}) {
-  const daysInMonth = options.daysInMonth || MONTH_DAYS_IN_MONTH;
-  const closedDays = options.closedDays || MONTHLY_CLOSED_DAYS;
-  const monthPrefix = options.monthPrefix || MONTH_DAY_LABEL_PREFIX;
-  const anchorDay = options.anchorDay ?? parseAnchorDayFromSubtitle(anchorDetail?.subtitle);
-
-  const monthTotal = monthDetail?.visits ?? 0;
-  const anchorTotal = anchorDetail?.visits ?? 0;
-  const anchorBreakdown = getOutpatientBreakdown(anchorDetail);
-
-  const openDaysThroughAnchor = [];
-  for (let d = 1; d <= anchorDay; d++) {
-    if (!closedDays.has(d) || d === anchorDay) openDaysThroughAnchor.push(d);
-  }
-  const otherDays = openDaysThroughAnchor.filter((d) => d !== anchorDay);
-  const remaining = monthTotal - anchorTotal;
-
-  const dayTotals = new Map();
-  dayTotals.set(anchorDay, anchorTotal);
-
-  if (otherDays.length) {
-    const weights = otherDays.map((d) => 0.85 + ((d * 11) % 9) / 9);
-    const wSum = weights.reduce((a, b) => a + b, 0) || 1;
-    const allocated = [];
-    otherDays.forEach((d, i) => {
-      const v = Math.round(remaining * (weights[i] / wSum));
-      allocated.push(v);
-      dayTotals.set(d, v);
-    });
-    const diff = remaining - allocated.reduce((a, b) => a + b, 0);
-    if (diff !== 0 && otherDays.length) {
-      const last = otherDays[otherDays.length - 1];
-      dayTotals.set(last, (dayTotals.get(last) || 0) + diff);
-    }
-  }
-
-  const labels = [];
-  const totals = [];
-  for (let d = 1; d <= daysInMonth; d++) {
-    labels.push(`${monthPrefix}${d}`);
-    const isFuture = d > anchorDay;
-    const isClosed = closedDays.has(d) && d !== anchorDay;
-    if (isFuture || isClosed) {
-      totals.push(0);
-      continue;
-    }
-    totals.push(Math.max(0, Math.round((dayTotals.get(d) || 0) * weight)));
-  }
-
-  if (anchorTotal > 0) {
-    const anchorIdx = anchorDay - 1;
-    const anchorScaled = Math.max(0, Math.round(anchorTotal * weight));
-    totals[anchorIdx] = anchorScaled;
-    const anchorB = {
-      pureFirst: Math.round(anchorBreakdown.pureFirst * weight),
-      first: Math.round(anchorBreakdown.first * weight),
-      return: Math.round(anchorBreakdown.return * weight),
-      other: Math.round(anchorBreakdown.other * weight),
-    };
-    const split = {
-      pureFirst: [],
-      first: [],
-      return: [],
-      other: [],
-    };
-    totals.forEach((t, i) => {
-      if (i === anchorIdx && t > 0) {
-        split.pureFirst.push(anchorB.pureFirst);
-        split.first.push(anchorB.first);
-        split.return.push(anchorB.return);
-        split.other.push(anchorB.other);
-      } else {
-        const part = buildVisitBreakdownAtTotal(anchorDetail, t / weight, weight);
-        split.pureFirst.push(part.pureFirst);
-        split.first.push(part.first);
-        split.return.push(part.return);
-        split.other.push(part.other);
-      }
-    });
-    return { labels, ...split };
-  }
-
-  return { labels, ...splitVisitBreakdownSeries(totals, anchorDetail, weight) };
+function buildMonthlyDailyVisitBreakdownFromDetails(monthDetail, periodDetail, weight = 1, options = {}) {
+  const facts = resolveDailyFactsForChart(options, options.entityKey || 'clinic-sakura', weight);
+  return buildDailyVisitSeriesFromFacts(facts, options, weight);
 }
 
 // --- 予約メトリクス ---
@@ -479,50 +1390,9 @@ function splitAppointmentBreakdownSeries(totals, detail, weight = 1) {
   return { visited, notVisited, cancelled, noShow };
 }
 
-function buildMonthlyDailyAppointmentsFromDetails(monthDetail, anchorDetail, weight = 1, options = {}) {
-  const visitDaily = buildMonthlyDailyVisitBreakdownFromDetails(monthDetail, anchorDetail, weight, options);
-  const dayVisitTotals = visitDaily.labels.map((_, i) =>
-    (visitDaily.pureFirst[i] || 0) + (visitDaily.first[i] || 0)
-    + (visitDaily.return[i] || 0) + (visitDaily.other[i] || 0),
-  );
-
-  const monthAppt = getAppointments(monthDetail);
-  const monthVisits = monthDetail?.visits || 1;
-  const apptRatio = monthAppt.total / monthVisits;
-  const anchorAppt = getAppointments(anchorDetail);
-  const anchorDay = options.anchorDay ?? parseAnchorDayFromSubtitle(anchorDetail?.subtitle);
-  const anchorIdx = anchorDay - 1;
-
-  const visited = [];
-  const notVisited = [];
-  const cancelled = [];
-  const noShow = [];
-
-  dayVisitTotals.forEach((dayVisits, i) => {
-    if (dayVisits <= 0) {
-      visited.push(0);
-      notVisited.push(0);
-      cancelled.push(0);
-      noShow.push(0);
-      return;
-    }
-    if (i === anchorIdx) {
-      const b = anchorAppt.breakdown;
-      visited.push(Math.round(b.visited * weight));
-      notVisited.push(Math.round(b.notVisited * weight));
-      cancelled.push(Math.round(b.cancelled * weight));
-      noShow.push(Math.round(b.noShow * weight));
-      return;
-    }
-    const dayApptTotal = Math.max(0, Math.round(dayVisits * apptRatio));
-    const part = splitAppointmentBreakdown(dayApptTotal, monthAppt.breakdown, 1);
-    visited.push(part.visited);
-    notVisited.push(part.notVisited);
-    cancelled.push(part.cancelled);
-    noShow.push(part.noShow);
-  });
-
-  return { labels: visitDaily.labels, visited, notVisited, cancelled, noShow };
+function buildMonthlyDailyAppointmentsFromDetails(monthDetail, periodDetail, weight = 1, options = {}) {
+  const facts = resolveDailyFactsForChart(options, options.entityKey || 'clinic-sakura', weight);
+  return buildDailyAppointmentSeriesFromFacts(facts, options, weight);
 }
 
 function buildYearMonthAppointmentsFromDetails(detail, weight = 1) {
@@ -536,8 +1406,15 @@ function buildYearMonthAppointmentsFromDetails(detail, weight = 1) {
   const monthAppt = getAppointments(detail);
   const monthVisits = detail?.visits || 1;
   const apptRatio = monthAppt.total / monthVisits;
+  const asOfMonth = typeof parseAnchorDayFromSubtitle === 'function'
+    ? (() => {
+      const m = String(detail?.subtitle || '').match(/(\d{1,2})月/);
+      return m ? Number(m[1]) : 12;
+    })()
+    : 12;
 
-  const totals = labels.map((m) => {
+  const totals = labels.map((m, mi) => {
+    if (mi + 1 > asOfMonth) return 0;
     const visits = pick(detail?.charts?.visits, m);
     if (visits != null) return Math.max(0, Math.round(visits * apptRatio * weight));
     return 0;
@@ -583,16 +1460,32 @@ function getPopoverSegmentCount(type, detail, pageId, segmentLabel) {
     insightVisitOther: out.other + vis.breakdown.other,
   };
 
+  if (typeof getUtilization === 'function') {
+    const util = getUtilization(detail);
+    counts.insightUtilUsed = util.used;
+    counts.insightUtilEmpty = util.empty;
+  }
+  if (typeof getRecall === 'function') {
+    const recall = getRecall(detail);
+    counts.insightRecallBooked = recall.breakdown.booked;
+    counts.insightRecallContact = recall.breakdown.contact;
+    counts.insightRecallPending = recall.breakdown.pending;
+  }
+  if (typeof getQuestionnaire === 'function') {
+    const q = getQuestionnaire(detail);
+    counts.insightQuestionnaireDone = q.breakdown.done;
+    counts.insightQuestionnairePending = q.breakdown.pending;
+    counts.insightQuestionnairePartial = q.breakdown.partial;
+  }
+
   if (type && counts[type] != null) return counts[type];
 
   return null;
 }
 
-const POPOVER_MAX_ROWS = 25;
-
 function expandPopoverRows(templates, count) {
   if (!templates.length || !count || count <= 0) return [];
-  const n = Math.min(Math.max(0, Math.round(count)), POPOVER_MAX_ROWS);
+  const n = Math.max(0, Math.round(count));
   const rows = [];
   for (let i = 0; i < n; i++) {
     rows.push({ ...templates[i % templates.length] });
@@ -708,6 +1601,33 @@ function scalePopoverRowsToAmount(templates, type, targetAmount, detail) {
   return templates.map((r, i) => ({ ...r, [amountKey]: formatPopoverYen(scaled[i]) }));
 }
 
+function buildAppointmentCancelPopoverRows(detail, cancelTemplates, noShowTemplates) {
+  const appt = typeof getAppointments === 'function' ? getAppointments(detail) : null;
+  if (!appt?.breakdown) return [];
+  const b = appt.breakdown;
+  const sameDayTpl = cancelTemplates.find((t) => t.cancelType === '当日') || cancelTemplates[0];
+  const advanceTpl = cancelTemplates.find((t) => /前日/.test(t.cancelType || '')) || cancelTemplates[1] || cancelTemplates[0];
+  const noShowTpl = noShowTemplates[0] || {};
+  const rows = [];
+
+  for (let i = 0; i < (b.cancelSameDay || 0); i++) {
+    rows.push({ ...sameDayTpl, cancelType: '当日' });
+  }
+  for (let i = 0; i < (b.cancelAdvance || 0); i++) {
+    rows.push({ ...advanceTpl, cancelType: '前日以降' });
+  }
+  for (let i = 0; i < (b.noShow || 0); i++) {
+    const tpl = noShowTemplates[i % Math.max(noShowTemplates.length, 1)] || noShowTpl;
+    rows.push({
+      cancelType: '無断',
+      chartNo: tpl.chartNo || '—',
+      name: tpl.name || '—',
+      time: tpl.time || '—',
+    });
+  }
+  return rows;
+}
+
 function buildInsightPopoverRows(type, templates, detail, options = {}) {
   if (!detail) return templates.map((r) => ({ ...r }));
 
@@ -722,6 +1642,14 @@ function buildInsightPopoverRows(type, templates, detail, options = {}) {
   if (staffTypes.has(resolvedType) && typeof buildStaffSalesPopoverRows === 'function') {
     const staffRows = buildStaffSalesPopoverRows(resolvedType, detail, entityKey, templates);
     if (staffRows?.length) return staffRows;
+  }
+
+  if (resolvedType === 'insightApptCancel' && detail) {
+    const noShowTemplates = (typeof INSIGHT_POPOVER_ROWS !== 'undefined' && INSIGHT_POPOVER_ROWS.insightApptNoShow)
+      ? INSIGHT_POPOVER_ROWS.insightApptNoShow
+      : [];
+    const cancelRows = buildAppointmentCancelPopoverRows(detail, templates, noShowTemplates);
+    if (cancelRows.length) return cancelRows;
   }
 
   const amount = getPopoverSegmentAmount(resolvedType, detail, entityKey);
@@ -753,23 +1681,17 @@ function buildStaffSalesChartFromBreakdown(detail, labels, fixedShares) {
   }
   const sumFixed = fixedShares.reduce((s, v) => s + v, 0);
   const shares = [...fixedShares];
-  if (labels.length > fixedShares.length) {
-    shares.push(Math.max(0, 1 - sumFixed));
-  }
   while (shares.length < labels.length) shares.push(0);
   shares.length = labels.length;
-  const shareSum = shares.reduce((s, v) => s + v, 0) || 1;
 
   const insRatio = b.insurance / total;
   const selfRatio = b.selfPay / total;
-  const prodRatio = (b.products || 0) / total;
-  const otherRatio = (b.other || 0) / total;
 
   const rowTotals = reconcileShareAmounts(
     shares.map((share) => Math.round(total * share)),
-    Math.round(total * shareSum),
+    shares.map((share) => Math.round(total * share)).reduce((sum, v) => sum + v, 0),
   );
-  const targetIns = Math.round((b.insurance || 0) * shareSum);
+  const targetIns = Math.round((b.insurance || 0) * (sumFixed || 1));
 
   const insurance = reconcileShareAmounts(
     rowTotals.map((rowTotal) => Math.round(rowTotal * insRatio)),
@@ -784,111 +1706,173 @@ function buildStaffSalesChartFromBreakdown(detail, labels, fixedShares) {
   };
 }
 
-function buildStaffSalesChartFromDetail(detail, entityKey) {
-  const meta = ENTITY_META[entityKey];
-  const clinicId = meta?.clinicId || 'clinic-sakura';
+/**
+ * Dr/DH担当行 + 未設定（医院売上 − 担当帰属合計）をチャート化
+ */
+function buildStaffSalesChartWithResidual(detail, clinicId) {
+  const staff = getStaffRegistry(clinicId);
+  const total = Math.round(detail?.total || 0);
+  const b = detail?.breakdown || {};
+  if (!total) {
+    return { labels: [], insurance: [], selfPay: [] };
+  }
+  const insRatio = total > 0 ? (b.insurance || 0) / total : 0.6;
 
-  if (entityKey.startsWith('dr-') || entityKey.startsWith('dh-')) {
-    const name = meta.shortName || meta.label;
-    const base = buildStaffSalesChartFromBreakdown(
-      detail,
-      clinicId === 'clinic-harbor' ? HARBOR_STAFF_CHART_LABELS : SAKURA_STAFF_CHART_LABELS,
-      clinicId === 'clinic-harbor' ? HARBOR_STAFF_ROW_SHARES : SAKURA_STAFF_ROW_SHARES,
+  if (!staff.length) {
+    const ins = Math.round(total * insRatio);
+    return {
+      labels: [UNSET_CHART_LABEL],
+      insurance: [ins],
+      selfPay: [total - ins],
+    };
+  }
+
+  let staffAmounts = staff.map((row) => Math.round(total * row.share));
+  let attributed = staffAmounts.reduce((sum, v) => sum + v, 0);
+  if (attributed > total) {
+    const scale = total / attributed;
+    staffAmounts = reconcileShareAmounts(
+      staffAmounts.map((amt) => Math.round(amt * scale)),
+      total,
     );
-    const idx = base.labels.findIndex((l) => l.includes(name.split(' ')[0]));
-    if (idx >= 0) {
-      return {
-        labels: [name],
-        insurance: [base.insurance[idx]],
-        selfPay: [base.selfPay[idx]],
+    attributed = staffAmounts.reduce((sum, v) => sum + v, 0);
+  }
+
+  const labels = staff.map((row) => row.chartLabel);
+  const insurance = staffAmounts.map((amt) => Math.round(amt * insRatio));
+  const selfPay = staffAmounts.map((amt, i) => amt - insurance[i]);
+
+  let unsetAmt = splitStaffSalesTotal(total, clinicId).unset;
+  if (unsetAmt > 0) {
+    labels.push(UNSET_CHART_LABEL);
+    const unsetIns = Math.round(unsetAmt * insRatio);
+    insurance.push(unsetIns);
+    selfPay.push(unsetAmt - unsetIns);
+  } else if (attributed > total && insurance.length) {
+    insurance[insurance.length - 1] += unsetAmt;
+    selfPay[selfPay.length - 1] -= unsetAmt;
+  }
+
+  return { labels, insurance, selfPay };
+}
+
+function buildEntityMetaFromClinics() {
+  const meta = { all: { label: '全院', role: null } };
+  getClinics().forEach((clinic) => {
+    meta[clinic.id] = { label: clinic.name, clinicId: clinic.id };
+    Object.keys(clinic.roles || {}).forEach((roleKey) => {
+      const members = clinic.roles[roleKey] || [];
+      if (!members.length) return;
+      const roleEntityKey = `${clinic.id}-${roleKey}`;
+      meta[roleEntityKey] = {
+        label: `${clinic.name} — ${MOCK_DATA.roleLabels?.[roleKey] || roleKey}`,
+        role: roleKey,
+        clinicId: clinic.id,
       };
-    }
-    const share = ENTITY_WEIGHTS[entityKey] || 0.2;
-    return buildStaffSalesChartFromBreakdown(
-      { ...detail, total: Math.round(detail.total * share), breakdown: {
-        insurance: Math.round((detail.breakdown?.insurance || 0) * share),
-        selfPay: Math.round((detail.breakdown?.selfPay || 0) * share),
-        products: Math.round((detail.breakdown?.products || 0) * share),
-        other: Math.round((detail.breakdown?.other || 0) * share),
-      } },
-      [name],
-      [1],
-    );
+      members.forEach((member) => {
+        meta[member.id] = {
+          label: member.name,
+          role: roleKey,
+          clinicId: clinic.id,
+          shortName: staffMemberChartLabel(member, roleKey),
+        };
+      });
+    });
+  });
+  return meta;
+}
+
+function buildEntityWeightsFromClinics() {
+  const weights = { all: getAllClinicsRevenueWeight() };
+  getClinics().forEach((clinic) => {
+    const clinicWeight = getClinicRevenueWeight(clinic.id);
+    const staff = getStaffRegistry(clinic.id);
+    const roleShares = getStaffRoleShares(clinic.id);
+    weights[clinic.id] = clinicWeight;
+    if (clinic.roles?.Dr?.length) weights[`${clinic.id}-Dr`] = clinicWeight * roleShares.dr;
+    if (clinic.roles?.DH?.length) weights[`${clinic.id}-DH`] = clinicWeight * roleShares.dh;
+    weights[`${clinic.id}-DA`] = 0;
+    staff.forEach((row) => {
+      weights[row.id] = clinicWeight * row.share;
+    });
+    (clinic.roles?.DA || []).forEach((member) => {
+      weights[member.id] = 0;
+    });
+  });
+  return weights;
+}
+
+const ENTITY_META = buildEntityMetaFromClinics();
+const ENTITY_WEIGHTS = buildEntityWeightsFromClinics();
+
+function resolveClinicIdFromEntity(entityKey) {
+  if (ENTITY_META[entityKey]?.clinicId) return ENTITY_META[entityKey].clinicId;
+  if (isClinicEntityKey(entityKey)) return entityKey;
+  return getClinicIds()[0] || 'clinic-sakura';
+}
+
+function mergeStaffSalesCharts(chartA, chartB) {
+  return {
+    labels: [...(chartA?.labels || []), ...(chartB?.labels || [])],
+    insurance: [...(chartA?.insurance || []), ...(chartB?.insurance || [])],
+    selfPay: [...(chartA?.selfPay || []), ...(chartB?.selfPay || [])],
+  };
+}
+
+function buildAllClinicsStaffSalesChart(base) {
+  return getClinics().reduce((merged, clinic) => {
+    const meta = { ...ENTITY_META[clinic.id], entityKey: clinic.id };
+    const clinicDetail = scalePeriodDetail(base, getClinicRevenueWeight(clinic.id), meta);
+    const chart = buildStaffSalesChartFromDetail(clinicDetail, clinic.id);
+    return merged.labels?.length
+      ? mergeStaffSalesCharts(merged, chart)
+      : chart;
+  }, { labels: [], insurance: [], selfPay: [] });
+}
+
+function buildStaffSalesChartFromDetail(detail, entityKey) {
+  if (entityKey === 'all') {
+    const base = detail._periodKey ? MOCK_DATA.periodDetails[detail._periodKey] : null;
+    if (base) return buildAllClinicsStaffSalesChart(base);
   }
 
-  if (entityKey.endsWith('-Dr')) {
-    const labels = clinicId === 'clinic-harbor' ? ['中村 Dr'] : ['田中 Dr', '佐藤 Dr'];
-    const shares = clinicId === 'clinic-harbor'
-      ? [1]
-      : [0.4 / SAKURA_DR_STAFF_SHARE_SUM, 0.24 / SAKURA_DR_STAFF_SHARE_SUM];
-    return buildStaffSalesChartFromBreakdown(detail, labels, shares);
-  }
+  const meta = ENTITY_META[entityKey] || {};
+  const clinicId = resolveClinicIdFromEntity(entityKey);
 
-  if (entityKey.endsWith('-DH')) {
-    const labels = clinicId === 'clinic-harbor' ? ['高橋 DH', '森 DH'] : ['鈴木 DH', '山田 DH', '伊藤 DH'];
-    const shares = clinicId === 'clinic-harbor'
-      ? [0.28 / HARBOR_DH_STAFF_SHARE_SUM, 0.14 / HARBOR_DH_STAFF_SHARE_SUM]
-      : [0.15 / SAKURA_DH_STAFF_SHARE_SUM, 0.14 / SAKURA_DH_STAFF_SHARE_SUM, 0.11 / SAKURA_DH_STAFF_SHARE_SUM];
-    return buildStaffSalesChartFromBreakdown(detail, labels, shares);
-  }
-
-  if (entityKey.endsWith('-DA')) {
+  if (entityKey === 'staff-unset' || entityKey.endsWith('-unset')) {
+    const unsetTotal = splitStaffSalesTotal(detail?.total || 0, clinicId).unset;
+    if (!unsetTotal) return { labels: [], insurance: [], selfPay: [] };
     return buildStaffSalesChartFromBreakdown(detail, ['未設定'], [1]);
   }
 
-  if (entityKey === 'clinic-harbor') {
-    return buildStaffSalesChartFromBreakdown(detail, HARBOR_STAFF_CHART_LABELS, HARBOR_STAFF_ROW_SHARES);
+  if (entityKey.startsWith('dr-') || entityKey.startsWith('dh-')) {
+    const name = meta.shortName || meta.label;
+    if (!detail?.total) return { labels: [], insurance: [], selfPay: [] };
+    return buildStaffSalesChartFromBreakdown(detail, [name], [1]);
   }
 
-  return buildStaffSalesChartFromBreakdown(detail, SAKURA_STAFF_CHART_LABELS, SAKURA_STAFF_ROW_SHARES);
+  if (entityKey.endsWith('-Dr') || entityKey.endsWith('-DH')) {
+    const roleKey = entityKey.endsWith('-Dr') ? 'Dr' : 'DH';
+    const staff = getStaffRegistry(clinicId).filter((s) => s.role === roleKey);
+    if (!staff.length) return { labels: [], insurance: [], selfPay: [] };
+    const roleSum = sumStaffShares(staff, roleKey) || 1;
+    return buildStaffSalesChartFromBreakdown(
+      detail,
+      staff.map((s) => s.chartLabel),
+      staff.map((s) => s.share / roleSum),
+    );
+  }
+
+  if (isClinicEntityKey(entityKey)) {
+    return buildStaffSalesChartWithResidual(detail, entityKey);
+  }
+
+  return buildStaffSalesChartWithResidual(detail, clinicId);
 }
 
-const ENTITY_WEIGHTS = {
-  all: 1.65,
-  'clinic-sakura': 1,
-  'clinic-harbor': 0.44,
-  /** Dr担当シェア合計（0.4+0.24）— 医院の64%が田中+佐藤 */
-  'clinic-sakura-Dr': SAKURA_DR_STAFF_SHARE_SUM,
-  'clinic-sakura-DH': SAKURA_DH_STAFF_SHARE_SUM,
-  'clinic-sakura-DA': SAKURA_DA_STAFF_SHARE_SUM,
-  'clinic-harbor-Dr': HARBOR_CLINIC_WEIGHT * HARBOR_DR_STAFF_SHARE_SUM,
-  'clinic-harbor-DH': HARBOR_CLINIC_WEIGHT * HARBOR_DH_STAFF_SHARE_SUM,
-  'clinic-harbor-DA': 0.05,
-  'dr-tanaka': 0.4,
-  'dr-sato': 0.24,
-  'dr-nakamura': 0.38,
-  'dh-suzuki': 0.15,
-  'dh-yamada': 0.14,
-  'dh-ito': 0.11,
-  'dh-takahashi': 0.14,
-  'dh-mori': 0.1,
-  'da-watanabe': 0.04,
-  'da-kobayashi': 0.03,
-  'da-kato': 0.05,
-};
-
-const ENTITY_META = {
-  all: { label: '全院', role: null },
-  'clinic-sakura': { label: 'さくら歯科クリニック', clinicId: 'clinic-sakura' },
-  'clinic-harbor': { label: 'ハーバー歯科医院', clinicId: 'clinic-harbor' },
-  'clinic-sakura-Dr': { label: 'さくら歯科 — Dr', role: 'Dr', clinicId: 'clinic-sakura' },
-  'clinic-sakura-DH': { label: 'さくら歯科 — DH', role: 'DH', clinicId: 'clinic-sakura' },
-  'clinic-sakura-DA': { label: 'さくら歯科 — DA', role: 'DA', clinicId: 'clinic-sakura' },
-  'clinic-harbor-Dr': { label: 'ハーバー歯科 — Dr', role: 'Dr', clinicId: 'clinic-harbor' },
-  'clinic-harbor-DH': { label: 'ハーバー歯科 — DH', role: 'DH', clinicId: 'clinic-harbor' },
-  'clinic-harbor-DA': { label: 'ハーバー歯科 — DA', role: 'DA', clinicId: 'clinic-harbor' },
-  'dr-tanaka': { label: '田中 健一', role: 'Dr', clinicId: 'clinic-sakura', shortName: '田中 Dr' },
-  'dr-sato': { label: '佐藤 誠', role: 'Dr', clinicId: 'clinic-sakura', shortName: '佐藤 Dr' },
-  'dr-nakamura': { label: '中村 翔', role: 'Dr', clinicId: 'clinic-harbor', shortName: '中村 Dr' },
-  'dh-suzuki': { label: '鈴木 美咲', role: 'DH', clinicId: 'clinic-sakura', shortName: '鈴木 DH' },
-  'dh-yamada': { label: '山田 恵', role: 'DH', clinicId: 'clinic-sakura', shortName: '山田 DH' },
-  'dh-ito': { label: '伊藤 彩', role: 'DH', clinicId: 'clinic-sakura', shortName: '伊藤 DH' },
-  'dh-takahashi': { label: '高橋 優', role: 'DH', clinicId: 'clinic-harbor', shortName: '高橋 DH' },
-  'dh-mori': { label: '森 奈々', role: 'DH', clinicId: 'clinic-harbor', shortName: '森 DH' },
-  'da-watanabe': { label: '渡辺 花子', role: 'DA', clinicId: 'clinic-sakura', shortName: '渡辺 DA' },
-  'da-kobayashi': { label: '小林 太郎', role: 'DA', clinicId: 'clinic-sakura', shortName: '小林 DA' },
-  'da-kato': { label: '加藤 真由', role: 'DA', clinicId: 'clinic-harbor', shortName: '加藤 DA' },
-};
+function buildEntityWeightsFromRegistry() {
+  return buildEntityWeightsFromClinics();
+}
 
 const STAFF_TRAITS = {
   'dr-tanaka': { selfPayBias: 1.12, trendText: '+4.2%', trend: 'up', utilization: 82 },
@@ -1027,21 +2011,200 @@ function scalePeriodDetail(base, weight, meta) {
   if (base.appointments) {
     detail.appointments = scaleAppointmentsBlock(base.appointments, weight, base.visits);
   }
+  if (base.utilization) {
+    detail.utilization = scaleUtilizationBlock(base.utilization, weight);
+  }
+  if (base.recall) {
+    detail.recall = scaleRecallBlock(base.recall, weight);
+  }
+  if (base.questionnaire) {
+    detail.questionnaire = scaleQuestionnaireBlock(base.questionnaire, weight);
+  }
 
   return detail;
 }
 
+function sumNumericArrays(a, b) {
+  const len = Math.max(a?.length || 0, b?.length || 0);
+  const result = [];
+  for (let i = 0; i < len; i++) {
+    result.push((a?.[i] || 0) + (b?.[i] || 0));
+  }
+  return result;
+}
+
+function mergeBreakdownParts(a, b) {
+  return {
+    insurance: (a?.insurance || 0) + (b?.insurance || 0),
+    selfPay: (a?.selfPay || 0) + (b?.selfPay || 0),
+    products: (a?.products || 0) + (b?.products || 0),
+    other: (a?.other || 0) + (b?.other || 0),
+  };
+}
+
+function mergePatientsBlocks(a, b) {
+  if (!a) return b ? JSON.parse(JSON.stringify(b)) : undefined;
+  if (!b) return JSON.parse(JSON.stringify(a));
+  const outB = {
+    pureFirst: (a.outpatient?.breakdown?.pureFirst || 0) + (b.outpatient?.breakdown?.pureFirst || 0),
+    first: (a.outpatient?.breakdown?.first || 0) + (b.outpatient?.breakdown?.first || 0),
+    return: (a.outpatient?.breakdown?.return || 0) + (b.outpatient?.breakdown?.return || 0),
+    other: (a.outpatient?.breakdown?.other || 0) + (b.outpatient?.breakdown?.other || 0),
+  };
+  const outTotal = sumVisitBreakdown(outB);
+  const visB = {
+    pureFirst: (a.visiting?.breakdown?.pureFirst || 0) + (b.visiting?.breakdown?.pureFirst || 0),
+    first: (a.visiting?.breakdown?.first || 0) + (b.visiting?.breakdown?.first || 0),
+    return: (a.visiting?.breakdown?.return || 0) + (b.visiting?.breakdown?.return || 0),
+    other: (a.visiting?.breakdown?.other || 0) + (b.visiting?.breakdown?.other || 0),
+  };
+  const visTotal = (a.visiting?.total || 0) + (b.visiting?.total || 0);
+  return {
+    outpatient: { breakdown: reconcileVisitBreakdown(outB, outTotal) },
+    visiting: {
+      total: visTotal,
+      breakdown: reconcileVisitBreakdown(visB, visTotal),
+    },
+  };
+}
+
+function mergeAppointmentsBlocks(a, b) {
+  if (!a?.breakdown) return b ? JSON.parse(JSON.stringify(b)) : a;
+  if (!b?.breakdown) return JSON.parse(JSON.stringify(a));
+  const visited = a.breakdown.visited + b.breakdown.visited;
+  const notVisited = a.breakdown.notVisited + b.breakdown.notVisited;
+  const cancelled = a.breakdown.cancelled + b.breakdown.cancelled;
+  const noShow = a.breakdown.noShow + b.breakdown.noShow;
+  const total = a.total + b.total;
+  const breakdown = { visited, notVisited, cancelled, noShow };
+  const sum = visited + notVisited + cancelled + noShow;
+  if (sum !== total) {
+    breakdown.noShow = Math.max(0, total - visited - notVisited - cancelled);
+  }
+  return { total, breakdown };
+}
+
+function mergeCashflowRows(rowsA, rowsB) {
+  if (!rowsA) return rowsB;
+  if (!rowsB) return rowsA;
+  return rowsA.map((row, i) => {
+    const other = rowsB[i];
+    if (!other || row.label !== other.label) return { ...row };
+    const next = { ...row };
+    if (String(row.value).startsWith('¥') && String(other.value).startsWith('¥')) {
+      const aAmt = parseInt(String(row.value).replace(/[¥,]/g, ''), 10) || 0;
+      const bAmt = parseInt(String(other.value).replace(/[¥,]/g, ''), 10) || 0;
+      next.value = formatYenValue(aAmt + bAmt);
+    } else if (row.unit === '%' && other.unit === '%') {
+      const aPct = parseFloat(String(row.value)) || 0;
+      const bPct = parseFloat(String(other.value)) || 0;
+      next.value = String(Math.round(((aPct + bPct) / 2) * 10) / 10);
+      if (row.progress != null && other.progress != null) {
+        next.progress = Math.round((row.progress + other.progress) / 2);
+      }
+    }
+    return next;
+  });
+}
+
+function mergeInsightsRows(rowsA, rowsB, mergedDetail) {
+  if (!rowsA) return rowsB;
+  if (!rowsB) return rowsA;
+  return rowsA.map((item, i) => {
+    const other = rowsB[i];
+    if (!other || item.label !== other.label) return { ...item };
+    const next = { ...item };
+    if (item.label === '患者単価' && mergedDetail.visits > 0) {
+      next.value = formatYenValue(Math.round(mergedDetail.total / mergedDetail.visits));
+    } else if (item.label === '自費率' && mergedDetail.total > 0) {
+      next.value = String(calcSelfPayRatePct(mergedDetail.breakdown, mergedDetail.total));
+    } else if (item.unit === '名' || item.unit === '件' || item.label?.includes('新患') || item.label?.includes('予約')) {
+      const aNum = parseInt(String(item.value).replace(/,/g, ''), 10) || 0;
+      const bNum = parseInt(String(other.value).replace(/,/g, ''), 10) || 0;
+      next.value = String(aNum + bNum);
+    } else if (item.cancelCount != null) {
+      next.cancelCount = (item.cancelCount || 0) + (other.cancelCount || 0);
+      const apptTotal = mergedDetail.appointments?.total || 0;
+      next.cancelRate = apptTotal > 0
+        ? Math.round(((next.cancelCount / apptTotal) * 1000)) / 10
+        : item.cancelRate;
+    } else if (String(item.value).startsWith('¥')) {
+      const aAmt = parseInt(String(item.value).replace(/[¥,]/g, ''), 10) || 0;
+      const bAmt = parseInt(String(other.value).replace(/[¥,]/g, ''), 10) || 0;
+      next.value = formatYenValue(aAmt + bAmt);
+    }
+    return next;
+  });
+}
+
+function mergeTwoPeriodDetails(detailA, detailB, mergedMeta = {}) {
+  const total = (detailA.total || 0) + (detailB.total || 0);
+  const visits = (detailA.visits || 0) + (detailB.visits || 0);
+  const breakdown = rebalanceBreakdown(
+    mergeBreakdownParts(detailA.breakdown, detailB.breakdown),
+    total,
+  );
+  const baseSubtitle = String(detailA.subtitle || '').split(' · ').pop() || detailA.subtitle;
+  const merged = {
+    ...JSON.parse(JSON.stringify(detailA)),
+    total,
+    visits,
+    breakdown,
+    subtitle: mergedMeta.label ? `${mergedMeta.label} · ${baseSubtitle}` : detailA.subtitle,
+  };
+
+  if (detailA.charts && detailB.charts) {
+    merged.charts = { ...detailA.charts };
+    ['insurance', 'selfPay', 'products', 'other', 'visits', 'visitsFirst', 'visitsReFirst', 'visitsReturn', 'compareRevenue', 'compareVisits'].forEach((key) => {
+      if (detailA.charts[key] || detailB.charts[key]) {
+        merged.charts[key] = sumNumericArrays(detailA.charts[key], detailB.charts[key]);
+      }
+    });
+  }
+
+  merged.patients = mergePatientsBlocks(detailA.patients, detailB.patients);
+  merged.appointments = mergeAppointmentsBlocks(detailA.appointments, detailB.appointments);
+  merged.utilization = mergeUtilizationBlocks(detailA.utilization, detailB.utilization);
+  merged.recall = mergeRecallBlocks(detailA.recall, detailB.recall);
+  merged.questionnaire = mergeQuestionnaireBlocks(detailA.questionnaire, detailB.questionnaire);
+  merged.cashflow = mergeCashflowRows(detailA.cashflow, detailB.cashflow);
+  merged.insights = mergeInsightsRows(detailA.insights, detailB.insights, merged);
+
+  return merged;
+}
+
+function mergeAllClinicsPeriodDetail(base, periodKey) {
+  const allMeta = { ...ENTITY_META.all, entityKey: 'all' };
+  const clinics = getClinics();
+  if (!clinics.length) {
+    const fallback = scalePeriodDetail(base, 1, allMeta);
+    fallback._periodKey = periodKey;
+    return fallback;
+  }
+  const clinicDetails = clinics.map((clinic) => {
+    const meta = { ...ENTITY_META[clinic.id], entityKey: clinic.id };
+    return scalePeriodDetail(base, getClinicRevenueWeight(clinic.id), meta);
+  });
+  const merged = clinicDetails.length === 1
+    ? clinicDetails[0]
+    : clinicDetails.slice(1).reduce(
+      (acc, detail) => mergeTwoPeriodDetails(acc, detail, allMeta),
+      clinicDetails[0],
+    );
+  if (merged) merged._periodKey = periodKey;
+  return merged;
+}
+
 function derivePeriodCard(periodKey, weight, entityKey = 'clinic-sakura') {
-  const base = MOCK_DATA.periodDetails[periodKey];
-  if (!base) return null;
-  const detail = scalePeriodDetail(JSON.parse(JSON.stringify(base)), weight, { entityKey });
+  const detail = resolvePeriodDetail(periodKey, { entityKey, weight });
+  if (!detail) return null;
   const b = detail.breakdown;
   return {
     label: periodKey,
     value: formatYenValue(detail.total),
     visits: detail.visits,
-    change: base.change?.text,
-    changeUp: base.change?.up,
+    change: detail.change?.text,
+    changeUp: detail.change?.up,
     active: periodKey === '本日',
     visitsCumulative: periodKey === '今月' || periodKey === '今年',
     revenue: {
@@ -1056,10 +2219,23 @@ function derivePeriodCard(periodKey, weight, entityKey = 'clinic-sakura') {
 
 function buildEntityPeriodDetails(entityKey, weight) {
   const meta = { ...ENTITY_META[entityKey], entityKey };
+  const facts = getDailyFacts(entityKey, weight);
   const result = {};
   PERIOD_KEYS.forEach((pk) => {
     const base = MOCK_DATA.periodDetails[pk];
-    if (base) result[pk] = scalePeriodDetail(base, weight, meta);
+    if (!base) return;
+    let detail;
+    if (entityKey === 'all') {
+      detail = mergeAllClinicsPeriodDetail(base, pk);
+    } else {
+      detail = scalePeriodDetail(base, weight, meta);
+    }
+    if (FACT_AGGREGATE_PERIODS.has(pk)) {
+      const agg = aggregateDailyFacts(filterFactsByPeriod(facts, pk));
+      detail = overlayAggregateOnPeriodDetail(detail, agg);
+    }
+    detail._periodKey = pk;
+    result[pk] = detail;
   });
   return result;
 }
@@ -1132,33 +2308,49 @@ function buildStaffSalesOverride(entityKey, detail) {
   if (meta?.role === 'DH' && entityKey.startsWith('dh-')) {
     return { total, dr: 0, dh: total, unset: 0, trendText: traits.trendText, trend: traits.trend };
   }
-  if (meta?.role === 'DA' && (entityKey.startsWith('da-') || entityKey.endsWith('-DA'))) {
-    return { total, dr: 0, dh: 0, unset: total, trendText: traits.trendText, trend: traits.trend };
+  if (meta?.role === 'unset' && (entityKey === 'staff-unset' || entityKey.endsWith('-unset'))) {
+    const clinicId = resolveClinicIdFromEntity(entityKey);
+    const unset = splitStaffSalesTotal(total, clinicId).unset;
+    return { total: unset, dr: 0, dh: 0, unset, trendText: traits.trendText, trend: traits.trend };
   }
   return null;
 }
 
-/** 職種別売上内訳 — チャート行の職種合計を正とする（KPI・ポップオーバー共通） */
 function computeStaffBreakdownFromChart(detail, entityKey = 'clinic-sakura') {
-  const raw = buildStaffSalesChartFromDetail(detail, entityKey);
-  const rows = raw.labels.map((label, i) => ({
-    role: staffChartRowRole(label),
-    total: (raw.insurance[i] || 0) + (raw.selfPay[i] || 0),
-  }));
-  let dr = rows.filter((r) => r.role === 'dr').reduce((s, r) => s + r.total, 0);
-  let dh = rows.filter((r) => r.role === 'dh').reduce((s, r) => s + r.total, 0);
-  let unset = rows.filter((r) => r.role === 'unset').reduce((s, r) => s + r.total, 0);
-  const target = Math.round(detail?.total || 0);
-  const diff = target - dr - dh - unset;
-  if (diff !== 0) {
-    unset = Math.max(0, unset + diff);
+  if (entityKey === 'all') {
+    const periodKey = detail?._periodKey || '本日';
+    const base = (typeof MOCK_DATA !== 'undefined' && MOCK_DATA.periodDetails?.[periodKey])
+      ? MOCK_DATA.periodDetails[periodKey]
+      : detail;
+    return getClinics().reduce((acc, clinic) => {
+      const w = getClinicRevenueWeight(clinic.id);
+      const meta = { ...ENTITY_META[clinic.id], entityKey: clinic.id };
+      const clinicDetail = typeof scalePeriodDetail === 'function'
+        ? scalePeriodDetail(base, w, meta)
+        : detail;
+      const part = splitStaffSalesTotal(clinicDetail?.total || 0, clinic.id);
+      return {
+        dr: acc.dr + part.dr,
+        dh: acc.dh + part.dh,
+        unset: acc.unset + part.unset,
+      };
+    }, { dr: 0, dh: 0, unset: 0 });
   }
-  return { dr, dh, unset };
+  const clinicId = resolveClinicIdFromEntity(entityKey);
+  if (entityKey.endsWith('-Dr')) {
+    const part = splitStaffSalesTotal(detail?.total || 0, clinicId);
+    return { dr: part.dr, dh: 0, unset: 0 };
+  }
+  if (entityKey.endsWith('-DH')) {
+    const part = splitStaffSalesTotal(detail?.total || 0, clinicId);
+    return { dr: 0, dh: part.dh, unset: 0 };
+  }
+  return splitStaffSalesTotal(detail?.total || 0, clinicId);
 }
 
 function getStaffSalesBreakdown(detail, entityKey = 'clinic-sakura') {
   const override = buildStaffSalesOverride(entityKey, detail);
-  if (override && (entityKey.startsWith('dr-') || entityKey.startsWith('dh-') || entityKey.startsWith('da-') || entityKey.endsWith('-DA'))) {
+  if (override && (entityKey.startsWith('dr-') || entityKey.startsWith('dh-') || entityKey === 'staff-unset' || entityKey.endsWith('-unset'))) {
     return {
       dr: override.dr || 0,
       dh: override.dh || 0,
@@ -1170,7 +2362,7 @@ function getStaffSalesBreakdown(detail, entityKey = 'clinic-sakura') {
 
 function staffChartRowRole(label) {
   const text = String(label || '');
-  if (text.includes('未設定')) return 'unset';
+  if (text.includes(UNSET_CHART_LABEL) || text.includes('未設定')) return 'unset';
   if (text.includes('DH')) return 'dh';
   return 'dr';
 }
@@ -1213,6 +2405,13 @@ function reconcileStaffSalesChart(chart, breakdown) {
       chartCopy.labels.splice(unsetIdx, 1);
       chartCopy.insurance.splice(unsetIdx, 1);
       chartCopy.selfPay.splice(unsetIdx, 1);
+    }
+  } else {
+    const hasUnset = chartCopy.labels.some((l) => l.includes('未設定'));
+    if (!hasUnset) {
+      chartCopy.labels.push(UNSET_CHART_LABEL);
+      chartCopy.insurance.push(0);
+      chartCopy.selfPay.push(0);
     }
   }
 
@@ -1303,7 +2502,7 @@ function buildStaffSalesPopoverRows(type, detail, entityKey = 'clinic-sakura', t
 }
 
 function buildIntelOverridesForEntity(entityKey, periodKey, detail) {
-  if (entityKey === 'clinic-sakura') return {};
+  if (entityKey === 'clinic-sakura' || entityKey === 'all') return {};
 
   const meta = ENTITY_META[entityKey];
   const traits = STAFF_TRAITS[entityKey] || {};
@@ -1314,11 +2513,11 @@ function buildIntelOverridesForEntity(entityKey, periodKey, detail) {
   const staffSales = buildStaffSalesOverride(entityKey, detail);
   if (staffSales) overrides.staffSales = staffSales;
 
-  if (meta?.role === 'DA' || entityKey.endsWith('-DA')) {
+  if (meta?.role === 'unset' || entityKey === 'staff-unset' || entityKey.endsWith('-unset')) {
     overrides.utilization = {
       value: String(traits.utilization || 78),
       progress: traits.utilization || 78,
-      sub: '予約対応・受付稼働',
+      sub: '担当未割当の稼働',
       trendText: traits.trendText || '±0',
     };
     overrides.appointments = {
@@ -1366,29 +2565,11 @@ function buildStaffSalesChartForEntity(entityKey, periodKey, breakdown, detail) 
 }
 
 function getDefaultStaffSalesChartBase(periodKey) {
-  const maps = {
-    '前日': {
-      labels: ['田中 Dr', '佐藤 Dr', '鈴木 DH', '山田 DH', '未設定'],
-      insurance: [52000, 42000, 18200, 17400, 4800],
-      selfPay: [28000, 26400, 9800, 8600, 3200],
-    },
-    '本日': {
-      labels: ['田中 Dr', '佐藤 Dr', '鈴木 DH', '山田 DH', '未設定'],
-      insurance: [38000, 20600, 14200, 12800, 5200],
-      selfPay: [18600, 13200, 7200, 9600, 3400],
-    },
-    '今月': {
-      labels: ['田中 Dr', '佐藤 Dr', '鈴木 DH', '山田 DH', '未設定'],
-      insurance: [820000, 780000, 420000, 380000, 48000],
-      selfPay: [520000, 480000, 280000, 240000, 72000],
-    },
-    '今年': {
-      labels: ['田中 Dr', '佐藤 Dr', '鈴木 DH', '山田 DH', '未設定'],
-      insurance: [4200000, 3900000, 2100000, 1900000, 240000],
-      selfPay: [2800000, 2600000, 1400000, 1200000, 760000],
-    },
-  };
-  return maps[periodKey] || maps['本日'];
+  const detail = MOCK_DATA?.periodDetails?.[periodKey] || MOCK_DATA?.periodDetails?.['本日'];
+  if (detail && typeof buildStaffSalesChartWithResidual === 'function') {
+    return buildStaffSalesChartWithResidual(detail, getClinicIds()[0] || 'clinic-sakura');
+  }
+  return { labels: [UNSET_CHART_LABEL], insurance: [0], selfPay: [0] };
 }
 
 function filterChartByLabels(chart, labels, breakdown) {
@@ -1418,8 +2599,8 @@ function buildUtilizationChartForEntity(entityKey, periodKey) {
     };
   }
 
-  if (entityKey === 'clinic-harbor') {
-    return { ...base, values: base.values.map((v) => Math.max(45, v - 8)) };
+  if (entityKey === 'all') {
+    return buildUtilizationChartForEntity('clinic-sakura', periodKey);
   }
 
   return base;

@@ -50,7 +50,6 @@ const INSIGHT_SEGMENT_POPOVER_MAP = {
   questionnaire: {
     完了: 'insightQuestionnaireDone',
     未回答: 'insightQuestionnairePending',
-    途中: 'insightQuestionnairePartial',
   },
 };
 
@@ -314,6 +313,14 @@ const INSIGHT_POPOVER_CONFIG = {
       { key: 'staff', label: '担当' },
     ],
   },
+  insightAtRiskPatient: {
+    title: '予約履歴',
+    columns: [
+      { key: 'date', label: '予約日' },
+      { key: 'cancelled', label: 'CXL有無' },
+      { key: 'slot', label: '時間枠' },
+    ],
+  },
   insightDropoutActive: {
     title: '中断患者',
     columns: [
@@ -419,7 +426,7 @@ const INSIGHT_POPOVER_ROWS = {
   ],
   insightApptCancel: [
     { cancelType: '当日', chartNo: 'C-3310', name: '松本 優', time: '10:30' },
-    { cancelType: '前日', chartNo: 'C-3388', name: '井上 拓也', time: '13:00' },
+    { cancelType: '前日以降', chartNo: 'C-3388', name: '井上 拓也', time: '13:00' },
   ],
   insightApptNoShow: [
     { chartNo: 'C-3401', name: '木村 さくら', time: '16:00', doctor: '田中 Dr' },
@@ -550,6 +557,7 @@ const CHART_LABEL_POPOVER_MAP = {
   来院済: 'insightApptVisited',
   キャンセル: 'insightApptCancel',
   CX: 'insightApptCancel',
+  CXL: 'insightApptCancel',
   無断: 'insightApptNoShow',
   無断CX: 'insightApptNoShow',
   未来院: 'insightApptPending',
@@ -632,6 +640,15 @@ function resolveChartPopoverType(pageId, label) {
 }
 
 function buildChartPopoverOptions(pageId, label, context = {}) {
+  if (context.patientId) {
+    const patient = (MOCK_DATA?.atRiskPatients || []).find((p) => p.id === context.patientId);
+    const rows = (patient?.appointments || []).map((a) => ({
+      date: a.date,
+      cancelled: a.cancelled ? 'あり' : 'なし',
+      slot: a.slot,
+    }));
+    return { titleSuffix: patient?.name || label, rows };
+  }
   const itemLabel = String(label || '').trim();
   const type = resolveChartPopoverType(pageId, itemLabel);
   const parts = [context.chartTitle, context.series, itemLabel].filter(Boolean);

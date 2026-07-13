@@ -63,15 +63,18 @@ function getActivePeriodDetail(periodKey, metricsContext) {
 /** 入金実績カード（入金・未収金の内訳） */
 function buildPaymentRecordPanel(periodKey, override = {}, periodDetail = null) {
   const detail = periodDetail || getActivePeriodDetail(periodKey);
-  const receivablesAmt = parseYen(
-    override.receivables ?? override.receivableAmount ?? override.value ?? 12400
-  );
+  const payment = typeof getPaymentRecord === 'function'
+    ? getPaymentRecord(detail)
+    : null;
+  const periodTotal = payment?.total ?? detail?.total ?? MOCK_DATA.periodDetails[periodKey]?.total ?? 142800;
+  const receivablesAmt = override.receivables != null
+    ? parseYen(override.receivables)
+    : (payment?.receivables ?? parseYen(override.receivableAmount ?? override.value ?? 12400));
   let collectedAmt;
   if (override.collected != null) {
     collectedAmt = parseYen(override.collected);
   } else {
-    const periodTotal = detail?.total ?? MOCK_DATA.periodDetails[periodKey]?.total ?? 142800;
-    collectedAmt = Math.max(periodTotal - receivablesAmt, 0);
+    collectedAmt = payment?.collected ?? Math.max(periodTotal - receivablesAmt, 0);
   }
 
   return {
@@ -124,13 +127,76 @@ function buildSalesBreakdownPanel(periodKey, override = {}, periodDetail = null)
   };
 }
 
+function buildUtilizationIntelPanel(periodDetail, override = {}) {
+  const util = typeof getUtilization === 'function'
+    ? getUtilization(periodDetail)
+    : { slots: 40, used: 31, empty: 9, ratePct: 78.4 };
+  const rate = util.ratePct ?? (typeof getUtilizationRatePct === 'function' ? getUtilizationRatePct(util) : 78.4);
+  return {
+    icon: INTELLIGENCE_ICONS.utilization,
+    label: '稼働率',
+    value: String(rate),
+    unit: '%',
+    sub: override.sub ?? `目標 82% / 予約枠 ${util.slots}`,
+    trend: override.trend ?? 'up',
+    trendText: override.trendText ?? '+2.1pt',
+    trendLabel: override.trendLabel ?? '前週比',
+    progress: Math.min(100, Math.round((rate / 82) * 100)),
+    accent: '#10b981',
+  };
+}
+
+function buildRecallIntelPanel(periodDetail, override = {}) {
+  const recall = typeof getRecall === 'function' ? getRecall(periodDetail) : { total: 142, breakdown: { booked: 105, contact: 22, pending: 15 } };
+  const rate = typeof getRecallBookedRatePct === 'function'
+    ? getRecallBookedRatePct(recall)
+    : Math.round(((recall.breakdown.booked / recall.total) || 0) * 1000) / 10;
+  return {
+    id: 'recall',
+    icon: INTELLIGENCE_ICONS.recall,
+    label: '予防',
+    value: String(rate),
+    unit: '%',
+    sub: override.sub ?? `対象 ${recall.total}名 / 予約済 ${recall.breakdown.booked}名`,
+    trend: override.trend ?? 'up',
+    trendText: override.trendText ?? '+1.4pt',
+    trendLabel: override.trendLabel ?? '前月比',
+    progress: Math.min(100, Math.round((rate / 75) * 100)),
+    accent: '#14b8a6',
+  };
+}
+
+function buildQuestionnaireIntelPanel(periodDetail, override = {}) {
+  const q = typeof getQuestionnaire === 'function'
+    ? getQuestionnaire(periodDetail)
+    : { total: 29, breakdown: { done: 24, pending: 3, partial: 2 } };
+  const rate = typeof getQuestionnaireDoneRatePct === 'function'
+    ? getQuestionnaireDoneRatePct(q)
+    : Math.round(((q.breakdown.done / q.total) || 0) * 1000) / 10;
+  return {
+    id: 'questionnaire',
+    icon: INTELLIGENCE_ICONS.questionnaire,
+    label: '問診',
+    value: String(rate),
+    unit: '%',
+    sub: override.sub ?? `完了 ${q.breakdown.done}件 / 未回答 ${q.breakdown.pending}件`,
+    trend: override.trend ?? 'up',
+    trendText: override.trendText ?? '+3件',
+    trendLabel: override.trendLabel ?? '前日比',
+    progress: Math.min(100, Math.round((rate / 85) * 100)),
+    accent: '#8b5cf6',
+  };
+}
+
 function buildIntelPanels(overrides = {}, periodKey = '本日', metricsContext = null) {
   const periodDetail = getActivePeriodDetail(periodKey, metricsContext);
   const periodTotal = periodDetail?.total ?? 142800;
   const entityKey = metricsContext?.entityKey || 'clinic-sakura';
   const staffParts = typeof getStaffSalesBreakdown === 'function'
     ? getStaffSalesBreakdown(periodDetail, entityKey)
-    : splitStaffSalesTotal(periodTotal);
+    : splitStaffSalesTotal(periodTotal, typeof resolveClinicIdFromEntity === 'function'
+      ? resolveClinicIdFromEntity(entityKey)
+      : 'clinic-sakura');
   const defaultStaff = buildStaffSalesPanel({
     total: periodTotal,
     dr: staffParts.dr,
@@ -143,32 +209,8 @@ function buildIntelPanels(overrides = {}, periodKey = '本日', metricsContext =
   const base = {
     unitPrice: buildSalesBreakdownPanel(periodKey, overrides.unitPrice, periodDetail),
     staffSales: defaultStaff,
-    utilization: {
-      icon: INTELLIGENCE_ICONS.utilization,
-      label: '稼働率',
-      value: '78.4',
-      unit: '%',
-      sub: '目標 82% / ユニット平均',
-      trend: 'up',
-      trendText: '+2.1pt',
-      trendLabel: '前週比',
-      progress: 96,
-      accent: '#10b981',
-    },
-    appointments: buildAppointmentsPanel(periodKey),
-    recall: {
-      id: 'recall',
-      icon: INTELLIGENCE_ICONS.recall,
-      label: '予防',
-      value: '68.2',
-      unit: '%',
-      sub: '予約率 74% / 継続率 91%',
-      trend: 'up',
-      trendText: '+1.4pt',
-      trendLabel: '前月比',
-      progress: 83,
-      accent: '#14b8a6',
-    },
+    utilization: buildUtilizationIntelPanel(periodDetail, overrides.utilization),
+    appointments: buildAppointmentsPanel(periodKey, overrides.appointments, periodDetail),
     selfPay: {
       id: 'selfPay',
       icon: INTELLIGENCE_ICONS.selfPay,
@@ -182,24 +224,18 @@ function buildIntelPanels(overrides = {}, periodKey = '本日', metricsContext =
       progress: 72,
       accent: '#ec4899',
     },
-    questionnaire: {
-      id: 'questionnaire',
-      icon: INTELLIGENCE_ICONS.questionnaire,
-      label: '問診',
-      value: '82.8',
-      unit: '%',
-      sub: '完了 24件 / 未回答 3件',
-      trend: 'up',
-      trendText: '+3件',
-      trendLabel: '前日比',
-      progress: 83,
-      accent: '#8b5cf6',
-    },
+    questionnaire: buildQuestionnaireIntelPanel(periodDetail, overrides.questionnaire),
   };
 
   const merged = { ...base, ...overrides };
   if (overrides.selfPay && base.selfPay) {
     merged.selfPay = { ...base.selfPay, ...overrides.selfPay };
+  }
+  if (overrides.utilization && base.utilization) {
+    merged.utilization = buildUtilizationIntelPanel(periodDetail, { ...base.utilization, ...overrides.utilization });
+  }
+  if (overrides.questionnaire && base.questionnaire) {
+    merged.questionnaire = buildQuestionnaireIntelPanel(periodDetail, { ...base.questionnaire, ...overrides.questionnaire });
   }
   if (merged.unitPrice && merged.unitPrice.type !== 'salesBreakdown') {
     merged.unitPrice = buildSalesBreakdownPanel(periodKey, merged.unitPrice, periodDetail);
@@ -220,7 +256,9 @@ function buildIntelPanels(overrides = {}, periodKey = '本日', metricsContext =
     const entityKey = metricsContext?.entityKey || 'clinic-sakura';
     const parts = typeof getStaffSalesBreakdown === 'function'
       ? getStaffSalesBreakdown(periodDetail, entityKey)
-      : splitStaffSalesTotal(total);
+      : splitStaffSalesTotal(total, typeof resolveClinicIdFromEntity === 'function'
+        ? resolveClinicIdFromEntity(entityKey)
+        : 'clinic-sakura');
     merged.staffSales = buildStaffSalesPanel({
       total,
       dr: s.dr ?? s.staffBreakdown?.dr ?? parts.dr,
@@ -240,7 +278,7 @@ const INTEL_PANEL_PRIMARY_IDS = [
   'visits', 'appointments',
 ];
 const INTEL_PANEL_SECONDARY_IDS = [
-  'utilization', 'recall', 'selfPay', 'questionnaire',
+  'utilization', 'selfPay', 'questionnaire',
 ];
 
 function buildVisitTypeBreakdown(periodKey, total, override = {}, periodDetail = null) {
@@ -382,12 +420,17 @@ function buildAppointmentsPanel(periodKey, override = {}, periodDetail = null) {
   const defaults = stored?.breakdown
     ? { total: stored.total, ...stored.breakdown }
     : (APPOINTMENT_BREAKDOWN_DEFAULTS[periodKey] || APPOINTMENT_BREAKDOWN_DEFAULTS['本日']);
+  const normalized = typeof normalizeAppointmentBreakdown === 'function'
+    ? normalizeAppointmentBreakdown(defaults)
+    : defaults;
   const total = override.total ?? override.appointmentTotal ?? defaults.total;
   const appointmentBreakdown = {
-    visited: override.visited ?? defaults.visited,
-    notVisited: override.notVisited ?? defaults.notVisited,
-    cancelled: override.cancelled ?? defaults.cancelled,
-    noShow: override.noShow ?? defaults.noShow,
+    visited: override.visited ?? normalized.visited,
+    notVisited: override.notVisited ?? normalized.notVisited,
+    cancelSameDay: override.cancelSameDay ?? normalized.cancelSameDay,
+    cancelAdvance: override.cancelAdvance ?? normalized.cancelAdvance,
+    noShow: override.noShow ?? normalized.noShow,
+    cancelled: override.cancelled ?? normalized.cancelled,
   };
 
   return {
@@ -477,7 +520,7 @@ const PERIOD_INTEL_OVERRIDES = {
 function getIntelligenceData(periodKey, metricsContext = null) {
   const detail = getActivePeriodDetail(periodKey, metricsContext);
   const entityKey = metricsContext?.entityKey || 'clinic-sakura';
-  const baseOverrides = entityKey === 'clinic-sakura'
+  const baseOverrides = (entityKey === 'clinic-sakura' || entityKey === 'all')
     ? (PERIOD_INTEL_OVERRIDES[periodKey] || PERIOD_INTEL_OVERRIDES['本日'])
     : {};
   const entityOverrides = typeof buildIntelOverridesForEntity === 'function'
@@ -516,29 +559,10 @@ function getDefaultStaffSalesChart(periodKey, detail = null) {
   if (detail && typeof buildStaffSalesChartFromDetail === 'function') {
     return buildStaffSalesChartFromDetail(detail, 'clinic-sakura');
   }
-  const maps = {
-    '前日': {
-      labels: ['田中 Dr', '佐藤 Dr', '鈴木 DH', '山田 DH', '未設定'],
-      insurance: [52000, 42000, 18200, 17400, 4800],
-      selfPay: [28000, 26400, 9800, 8600, 3200],
-    },
-    '本日': {
-      labels: ['田中 Dr', '佐藤 Dr', '鈴木 DH', '山田 DH', '未設定'],
-      insurance: [38000, 20600, 14200, 12800, 5200],
-      selfPay: [18600, 13200, 7200, 9600, 3400],
-    },
-    '今月': {
-      labels: ['田中 Dr', '佐藤 Dr', '鈴木 DH', '山田 DH', '未設定'],
-      insurance: [820000, 780000, 420000, 380000, 48000],
-      selfPay: [520000, 480000, 280000, 240000, 72000],
-    },
-    '今年': {
-      labels: ['田中 Dr', '佐藤 Dr', '鈴木 DH', '山田 DH', '未設定'],
-      insurance: [4200000, 3900000, 2100000, 1900000, 240000],
-      selfPay: [2800000, 2600000, 1400000, 1200000, 760000],
-    },
-  };
-  return maps[periodKey] || maps['本日'];
+  if (typeof getDefaultStaffSalesChartBase === 'function') {
+    return getDefaultStaffSalesChartBase(periodKey);
+  }
+  return { labels: ['未設定'], insurance: [0], selfPay: [0] };
 }
 
 function getStaffBreakdownFromPanels(panels) {

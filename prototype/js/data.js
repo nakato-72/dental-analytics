@@ -18,36 +18,19 @@ const MOCK_DATA = {
       id: 'clinic-sakura',
       name: 'さくら歯科クリニック',
       attainment: 68,
+      revenueWeight: 1,
       roles: {
         Dr: [
-          { id: 'dr-tanaka', name: '田中 健一', attainment: 85 },
-          { id: 'dr-sato', name: '佐藤 誠', attainment: 72 },
+          { id: 'dr-tanaka', name: '田中 健一', attainment: 85, salesShare: 0.37 },
+          { id: 'dr-sato', name: '佐藤 誠', attainment: 72, salesShare: 0.22 },
         ],
         DH: [
-          { id: 'dh-suzuki', name: '鈴木 美咲', attainment: 78 },
-          { id: 'dh-yamada', name: '山田 恵', attainment: 65 },
-          { id: 'dh-ito', name: '伊藤 彩', attainment: 91 },
+          { id: 'dh-suzuki', name: '鈴木 美咲', attainment: 78, salesShare: 0.14 },
+          { id: 'dh-yamada', name: '山田 恵', attainment: 65, salesShare: 0.13 },
+          { id: 'dh-ito', name: '伊藤 彩', attainment: 91, salesShare: 0.10 },
         ],
-        DA: [
-          { id: 'da-watanabe', name: '渡辺 花子', attainment: 88 },
-          { id: 'da-kobayashi', name: '小林 太郎', attainment: 76 },
-        ],
-      },
-    },
-    {
-      id: 'clinic-harbor',
-      name: 'ハーバー歯科医院',
-      attainment: 54,
-      roles: {
-        Dr: [
-          { id: 'dr-nakamura', name: '中村 翔', attainment: 61 },
-        ],
-        DH: [
-          { id: 'dh-takahashi', name: '高橋 優', attainment: 58 },
-          { id: 'dh-mori', name: '森 奈々', attainment: 49 },
-        ],
-        DA: [
-          { id: 'da-kato', name: '加藤 真由', attainment: 82 },
+        unset: [
+          { id: 'staff-unset', name: '未設定', attainment: 0 },
         ],
       },
     },
@@ -94,21 +77,21 @@ const MOCK_DATA = {
     },
   },
 
-  // 月次推移チャート（全階層共通）
+  // 月次推移チャート（6/23時点 — 7月以降は未来のため0）
   clinicOnly: {
     chart: {
       title: '月次売上推移（1年間）',
       labels: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
-      insurance: [3200000, 3450000, 3380000, 3620000, 3890000, 2640000, 3780000, 3920000, 3850000, 4010000, 4180000, 4350000],
-      selfPay: [1420000, 1580000, 1650000, 1720000, 1840000, 1280000, 1780000, 1850000, 1920000, 1980000, 2050000, 2120000],
-      products: [280000, 300000, 310000, 330000, 350000, 360000, 370000, 385000, 390000, 400000, 415000, 428000],
-      other: [60000, 55000, 48000, 42000, 38000, 0, 35000, 30000, 28000, 25000, 22000, 20000],
+      insurance: [1920000, 2080000, 2040000, 2180000, 2340000, 2640000, 0, 0, 0, 0, 0, 0],
+      selfPay: [880000, 960000, 1000000, 1040000, 1120000, 1280000, 0, 0, 0, 0, 0, 0],
+      products: [240000, 260000, 280000, 300000, 320000, 360000, 0, 0, 0, 0, 0, 0],
+      other: [80000, 70000, 60000, 50000, 40000, 0, 0, 0, 0, 0, 0, 0],
       highlightIndex: 5,
     },
   },
 
-  roleLabels: { Dr: 'ドクター', DH: '歯科衛生士', DA: '歯科助手' },
-  roleColors: { Dr: '#2563eb', DH: '#0891b2', DA: '#7c3aed' },
+  roleLabels: { Dr: 'ドクター', DH: '歯科衛生士', unset: '未設定' },
+  roleColors: { Dr: '#2563eb', DH: '#0891b2', unset: '#94a3b8' },
 
   revenueCategories: [
     { key: 'insurance', label: '保険', color: '#22c55e' },
@@ -171,7 +154,16 @@ const MOCK_DATA = {
       },
       appointments: {
         total: 42,
-        breakdown: { visited: 38, notVisited: 2, cancelled: 1, noShow: 1 },
+        breakdown: { visited: 38, notVisited: 2, cancelSameDay: 1, cancelAdvance: 0, noShow: 1 },
+      },
+      utilization: { slots: 40, used: 33, empty: 7 },
+      recall: {
+        total: 138,
+        breakdown: { booked: 100, contact: 24, pending: 14 },
+      },
+      questionnaire: {
+        total: 30,
+        breakdown: { done: 27, pending: 3 },
       },
     },
     '本日': {
@@ -220,7 +212,16 @@ const MOCK_DATA = {
       },
       appointments: {
         total: 34,
-        breakdown: { visited: 29, notVisited: 2, cancelled: 2, noShow: 1 },
+        breakdown: { visited: 29, notVisited: 2, cancelSameDay: 1, cancelAdvance: 1, noShow: 1 },
+      },
+      utilization: { slots: 40, used: 31, empty: 9 },
+      recall: {
+        total: 142,
+        breakdown: { booked: 105, contact: 22, pending: 15 },
+      },
+      questionnaire: {
+        total: 27,
+        breakdown: { done: 24, pending: 3 },
       },
     },
     '今月': {
@@ -270,7 +271,16 @@ const MOCK_DATA = {
       },
       appointments: {
         total: 912,
-        breakdown: { visited: 847, notVisited: 55, cancelled: 7, noShow: 3 },
+        breakdown: { visited: 847, notVisited: 55, cancelSameDay: 4, cancelAdvance: 3, noShow: 3 },
+      },
+      utilization: { slots: 880, used: 690, empty: 190 },
+      recall: {
+        total: 3180,
+        breakdown: { booked: 2340, contact: 520, pending: 320 },
+      },
+      questionnaire: {
+        total: 824,
+        breakdown: { done: 726, pending: 98 },
       },
     },
     '今年': {
@@ -320,8 +330,177 @@ const MOCK_DATA = {
       },
       appointments: {
         total: 5240,
-        breakdown: { visited: 4892, notVisited: 280, cancelled: 48, noShow: 20 },
+        breakdown: { visited: 4892, notVisited: 280, cancelSameDay: 26, cancelAdvance: 22, noShow: 20 },
+      },
+      utilization: { slots: 5280, used: 4140, empty: 1140 },
+      recall: {
+        total: 19200,
+        breakdown: { booked: 14160, contact: 3120, pending: 1920 },
+      },
+      questionnaire: {
+        total: 4856,
+        breakdown: { done: 4280, pending: 576 },
       },
     },
   },
+
+  /** 自費処置項目（件数ベース上位4+その他の集計用） */
+  selfPayTreatments: [
+    { label: 'インプラント', amount: 13608 },
+    { label: '矯正', amount: 11664 },
+    { label: 'ホワイトニング', amount: 8748 },
+    { label: 'セラミッククラウン', amount: 7120 },
+    { label: 'PMTC', amount: 4200 },
+    { label: '小児矯正相談', amount: 3800 },
+    { label: '歯周外科', amount: 3200 },
+    { label: '義歯調整', amount: 2800 },
+  ],
+
+  /** 問診アンケート（医院ごと・設問可変） */
+  questionnaireSurveys: {
+    'clinic-sakura': [
+      {
+        id: 'referral-source',
+        question: 'Qどこで当医院を知りましたか？',
+        options: [
+          { label: '紹介', value: 42, color: '#4285f4' },
+          { label: 'Google', value: 31, color: '#ea4335' },
+          { label: 'ホームページ', value: 18, color: '#fbbc04' },
+          { label: 'Instagram', value: 9, color: '#34a853' },
+        ],
+      },
+    ],
+  },
+
+  /** @deprecated questionnaireSurveys を使用 */
+  questionnaireSurvey: {
+    question: 'Qどこで当医院を知りましたか？',
+    options: [
+      { label: '紹介', value: 38, color: '#6366f1' },
+      { label: 'Google', value: 28, color: '#2563eb' },
+      { label: 'ホームページ', value: 18, color: '#0ea5e9' },
+      { label: 'Instagram', value: 12, color: '#ec4899' },
+      { label: '看板', value: 14, color: '#10b981' },
+      { label: '通りがかり', value: 10, color: '#94a3b8' },
+    ],
+  },
+
+  /** 担当別自費売上 — 担当の主な自費項目（色分け用） */
+  selfPayStaffItems: {
+    '田中 健一': 'インプラント',
+    '佐藤 誠': '矯正',
+    '鈴木 美咲': 'ホワイトニング',
+    '山田 恵': 'PMTC',
+    '伊藤 彩': 'セラミッククラウン',
+    '未設定': 'その他',
+  },
+
+  /** 要注意患者（次回予約あり＋過去6か月CXL1回以上） */
+  atRiskPatients: [
+    {
+      id: 'risk-yamamoto', name: '山本 様', lastVisit: '2026-06-10', nextAppt: '2026-06-25',
+      cancelPastYear: 4, totalAppts: 14, past6mCancels: 2, past6mTotalAppts: 8, past6mNoShows: 0,
+      appointments: [
+        { date: '2026-06-25', cancelled: false, slot: '10:30' },
+        { date: '2026-05-18', cancelled: true, slot: '14:00' },
+        { date: '2026-04-22', cancelled: true, slot: '11:00' },
+        { date: '2026-03-15', cancelled: false, slot: '15:30' },
+      ],
+    },
+    {
+      id: 'risk-matsumoto', name: '松本 優', lastVisit: '2026-05-28', nextAppt: '2026-06-28',
+      cancelPastYear: 5, totalAppts: 12, past6mCancels: 3, past6mTotalAppts: 7, past6mNoShows: 1,
+      appointments: [
+        { date: '2026-06-28', cancelled: false, slot: '16:00' },
+        { date: '2026-06-02', cancelled: true, slot: '10:00' },
+        { date: '2026-05-10', cancelled: true, slot: '13:30' },
+        { date: '2026-04-08', cancelled: true, slot: '11:30' },
+        { date: '2026-03-20', cancelled: false, slot: '09:30' },
+      ],
+    },
+    {
+      id: 'risk-inoue', name: '井上 拓也', lastVisit: '2026-06-05', nextAppt: '2026-06-24',
+      cancelPastYear: 3, totalAppts: 11, past6mCancels: 2, past6mTotalAppts: 6, past6mNoShows: 0,
+      appointments: [
+        { date: '2026-06-24', cancelled: false, slot: '14:30' },
+        { date: '2026-05-22', cancelled: true, slot: '10:30' },
+        { date: '2026-04-15', cancelled: true, slot: '15:00' },
+      ],
+    },
+    {
+      id: 'risk-sato', name: '佐藤 恵', lastVisit: '2026-05-15', nextAppt: '2026-06-26',
+      cancelPastYear: 2, totalAppts: 10, past6mCancels: 1, past6mTotalAppts: 5, past6mNoShows: 0,
+      appointments: [
+        { date: '2026-06-26', cancelled: false, slot: '11:00' },
+        { date: '2026-04-20', cancelled: true, slot: '14:00' },
+      ],
+    },
+    {
+      id: 'risk-takahashi', name: '高橋 大輔', lastVisit: '2026-06-01', nextAppt: '2026-06-27',
+      cancelPastYear: 3, totalAppts: 9, past6mCancels: 2, past6mTotalAppts: 6, past6mNoShows: 1,
+      appointments: [
+        { date: '2026-06-27', cancelled: false, slot: '09:00' },
+        { date: '2026-05-08', cancelled: true, slot: '16:30' },
+        { date: '2026-04-02', cancelled: false, slot: '10:00' },
+      ],
+    },
+    {
+      id: 'risk-kobayashi', name: '小林 美穂', lastVisit: '2026-05-20', nextAppt: '2026-07-02',
+      cancelPastYear: 2, totalAppts: 8, past6mCancels: 1, past6mTotalAppts: 4, past6mNoShows: 0,
+      appointments: [
+        { date: '2026-07-02', cancelled: false, slot: '13:00' },
+        { date: '2026-05-05', cancelled: true, slot: '11:30' },
+      ],
+    },
+    {
+      id: 'risk-watanabe', name: '渡辺 健', lastVisit: '2026-06-08', nextAppt: '2026-06-30',
+      cancelPastYear: 4, totalAppts: 13, past6mCancels: 2, past6mTotalAppts: 7, past6mNoShows: 1,
+      appointments: [
+        { date: '2026-06-30', cancelled: false, slot: '15:00' },
+        { date: '2026-05-15', cancelled: true, slot: '10:00' },
+        { date: '2026-04-10', cancelled: true, slot: '14:30' },
+      ],
+    },
+    {
+      id: 'risk-kato', name: '加藤 翔', lastVisit: '2026-05-25', nextAppt: '2026-07-05',
+      cancelPastYear: 2, totalAppts: 7, past6mCancels: 1, past6mTotalAppts: 4, past6mNoShows: 0,
+      appointments: [
+        { date: '2026-07-05', cancelled: false, slot: '10:30' },
+        { date: '2026-04-18', cancelled: true, slot: '13:00' },
+      ],
+    },
+    {
+      id: 'risk-nakamura', name: '中村 彩', lastVisit: '2026-06-12', nextAppt: '2026-07-08',
+      cancelPastYear: 3, totalAppts: 9, past6mCancels: 1, past6mTotalAppts: 5, past6mNoShows: 0,
+      appointments: [
+        { date: '2026-07-08', cancelled: false, slot: '11:30' },
+        { date: '2026-05-20', cancelled: true, slot: '15:30' },
+      ],
+    },
+    {
+      id: 'risk-tanaka', name: '田中 由美', lastVisit: '2026-05-30', nextAppt: '2026-07-10',
+      cancelPastYear: 2, totalAppts: 8, past6mCancels: 1, past6mTotalAppts: 5, past6mNoShows: 0,
+      appointments: [
+        { date: '2026-07-10', cancelled: false, slot: '14:00' },
+        { date: '2026-04-25', cancelled: true, slot: '10:30' },
+      ],
+    },
+    {
+      id: 'risk-yoshida', name: '吉田 誠', lastVisit: '2026-06-03', nextAppt: '2026-07-12',
+      cancelPastYear: 3, totalAppts: 10, past6mCancels: 2, past6mTotalAppts: 6, past6mNoShows: 0,
+      appointments: [
+        { date: '2026-07-12', cancelled: false, slot: '09:30' },
+        { date: '2026-05-12', cancelled: true, slot: '16:00' },
+        { date: '2026-03-28', cancelled: true, slot: '11:00' },
+      ],
+    },
+    {
+      id: 'risk-hayashi', name: '林 奈々', lastVisit: '2026-05-18', nextAppt: '2026-07-15',
+      cancelPastYear: 2, totalAppts: 7, past6mCancels: 1, past6mTotalAppts: 4, past6mNoShows: 0,
+      appointments: [
+        { date: '2026-07-15', cancelled: false, slot: '13:30' },
+        { date: '2026-04-05', cancelled: true, slot: '10:00' },
+      ],
+    },
+  ],
 };

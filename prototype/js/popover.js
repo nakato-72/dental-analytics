@@ -145,11 +145,19 @@ function resolvePopoverConfig(type) {
 
 function resolvePopoverRows(type, period) {
   if (popoverState.customRows) return popoverState.customRows;
+  const metricsContext = typeof getMetricsContext === 'function' && typeof state !== 'undefined'
+    ? getMetricsContext(state)
+    : null;
+  const detail = metricsContext && typeof resolvePeriodDetail === 'function'
+    ? resolvePeriodDetail(period, metricsContext)
+    : null;
+  const popoverOpts = { period, detail, metricsContext };
+
   if (typeof getInsightPopoverRows === 'function') {
-    const insightRows = getInsightPopoverRows(type, { period });
+    const insightRows = getInsightPopoverRows(type, popoverOpts);
     if (insightRows.length) return insightRows;
   }
-  return typeof getPopoverRows === 'function' ? getPopoverRows(type, period) : [];
+  return typeof getPopoverRows === 'function' ? getPopoverRows(type, period, popoverOpts) : [];
 }
 
 const POPOVER_DRAG_HANDLE = `

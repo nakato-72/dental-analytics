@@ -616,11 +616,14 @@ function initInsightCardDrag(scope) {
   });
 }
 
-function renderInsightCardSlot(key, innerHtml, index, { hideHandle = false } = {}) {
+function renderInsightCardSlot(key, innerHtml, index, { hideHandle = false, fullWidth = false, halfWidth = false } = {}) {
   const handleHtml = hideHandle ? '' : `
     <button type="button" class="insight-card-slot__drag-handle" aria-label="カードを並び替え" title="ドラッグして並び替え">${INSIGHT_CARD_DRAG_HANDLE_SVG}</button>`;
+  const layoutClass = fullWidth
+    ? ' insight-card-slot--full'
+    : (halfWidth ? ' insight-card-slot--half' : '');
   return `
-    <div class="insight-card-slot" data-card-key="${escapeHtml(key)}" data-slot-index="${index}">
+    <div class="insight-card-slot${layoutClass}" data-card-key="${escapeHtml(key)}" data-slot-index="${index}">
       ${handleHtml}
       ${innerHtml}
     </div>`;
@@ -686,6 +689,7 @@ function navigateInsight(overrides = {}) {
     closePopover();
   }
 
+  const prevPage = insightState.page;
   Object.assign(insightState, overrides);
   if (typeof normalizeInsightPageId === 'function') {
     insightState.page = normalizeInsightPageId(insightState.page);
@@ -697,6 +701,10 @@ function navigateInsight(overrides = {}) {
   syncAppStateFromInsight();
   updateInsightToolbarState();
   renderInsightContent();
+
+  if (overrides.page && insightState.page !== prevPage) {
+    window.scrollTo(0, 0);
+  }
 
   const meta = getInsightPageMeta(insightState.page);
   if (meta) document.title = `${meta.title} | Dental Analytics`;
@@ -771,6 +779,58 @@ const INSIGHT_CHIP_CHEVRON = `
     <polyline points="6 9 12 15 18 9"/>
   </svg>`;
 
+function computeChartYAxisTicks(maxValue, tickCount = 4) {
+  const rawMax = Math.max(maxValue, 1);
+  const rough = rawMax / tickCount;
+  const mag = 10 ** Math.floor(Math.log10(rough));
+  const norm = rough / mag;
+  let step = mag;
+  if (norm > 1) step = norm <= 2 ? 2 * mag : norm <= 5 ? 5 * mag : 10 * mag;
+  const top = Math.ceil(rawMax / step) * step;
+  const ticks = [];
+  for (let v = 0; v <= top; v += step) ticks.push(v);
+  return { max: top, ticks };
+}
+
+function formatYAxisTickLabel(value) {
+  const n = Math.round(value);
+  if (n >= 100000000) return `${Math.round(n / 100000000)}億`;
+  if (n >= 10000) return `${Math.round(n / 10000)}万`;
+  if (n >= 1000) return `${Math.round(n / 1000)}千`;
+  return String(n);
+}
+
+function renderKpiCompositionBar(segments, total, popoverPageId) {
+  const visible = segments.filter((seg) => (Number(seg.value) || 0) > 0);
+  if (!visible.length) return '';
+  const stack = visible.map((seg) => {
+    const v = Number(seg.value) || 0;
+    const pct = total > 0 ? (v / total) * 100 : 0;
+    const displayVal = seg.displayValue ?? (typeof formatYenDisplay === 'function' ? formatYenDisplay(v) : v);
+    const popoverKey = popoverPageId && typeof getInsightPopoverKey === 'function'
+      ? getInsightPopoverKey(popoverPageId, seg.label)
+      : null;
+    if (popoverKey) {
+      return `<button type="button"
+        class="insight-kpi-composition-seg insight-chart-clickable"
+        style="width:${pct}%;background:${seg.color}"
+        data-action="open-insight-popover"
+        data-popover-type="${popoverKey}"
+        data-popover-label="${seg.label}"
+        data-popover-item-label="${seg.label}"
+        title="${seg.label} ${displayVal}"
+        aria-expanded="false"
+        aria-label="${seg.label}の内訳を表示"></button>`;
+    }
+    return `<span class="insight-kpi-composition-seg" style="width:${pct}%;background:${seg.color}" title="${seg.label} ${displayVal}"></span>`;
+  }).join('');
+  return `
+    <div class="insight-kpi-split__composition">
+      <div class="insight-kpi-composition-label">売上構成</div>
+      <div class="insight-kpi-composition-bar" role="img" aria-label="売上構成の横棒グラフ">${stack}</div>
+    </div>`;
+}
+
 function renderInsightCompositeKpi(composite, pageId) {
   const total = composite.total || {};
   const segments = composite.segments || [];
@@ -810,19 +870,57 @@ function renderInsightCompositeKpi(composite, pageId) {
       : '';
     const rateHtml = hideChipRate ? '' : `<span class="${rateClass}">${rateText}</span>`;
 
+    const nestedHtml = seg.nestedInline?.length
+      ? `<div class="insight-kpi-split__cancel-breakdown">${seg.nestedInline.map((n) => {
+        const nRate = typeof n.rate === 'number'
+          ? `${n.rate % 1 === 0 ? n.rate.toFixed(0) : n.rate}%`
+          : (n.rate || '0%');
+        const itemColor = n.color ? ` style="--item-color:${n.color}"` : '';
+        return `<span class="insight-kpi-split__cancel-breakdown-item"${itemColor}>
+          <span class="insight-kpi-split__cancel-breakdown-label">${n.label}</span>
+          <strong class="insight-kpi-split__cancel-breakdown-value">${n.value}</strong>
+          <span class="insight-kpi-split__cancel-breakdown-rate">率 ${nRate}</span>
+        </span>`;
+      }).join('')}</div>`
+      : (seg.nested?.length
+        ? `<div class="insight-kpi-split__nested insight-kpi-split__nested--row">${seg.nested.map((n) => {
+          const nRate = typeof n.rate === 'number'
+            ? `${n.rate % 1 === 0 ? n.rate.toFixed(0) : n.rate}%`
+            : (n.rate || '');
+          return `<span class="insight-kpi-split__nested-item">
+          <span class="insight-kpi-split__nested-label">${n.label}</span>
+          <span class="insight-kpi-split__nested-value">${n.value}</span>
+          ${nRate ? `<span class="insight-kpi-split__nested-rate">${nRate}</span>` : ''}
+        </span>`;
+        }).join('')}</div>`
+        : '');
+
+    const wideClass = seg.wide ? ' insight-kpi-split__chip--wide' : '';
+    const inlineClass = seg.nestedInline?.length ? ' insight-kpi-split__chip--cancel-detail' : '';
+
     const popoverKey = popoverPageId && typeof getInsightPopoverKey === 'function'
       ? getInsightPopoverKey(popoverPageId, seg.label)
       : null;
-    const chipInner = `
+    const cancelRateText = typeof rate === 'string' ? rate : `${rate % 1 === 0 ? rate.toFixed(0) : rate}%`;
+    const chipInner = seg.nestedInline?.length
+      ? `
+        <div class="insight-kpi-split__cancel-summary">
+          <span class="insight-kpi-split__cancel-summary-label">${seg.label}${hintHtml}</span>
+          <span class="insight-kpi-split__cancel-summary-value">${displayVal}</span>
+          <span class="insight-kpi-split__cancel-summary-rate">率 ${cancelRateText}</span>
+        </div>
+        ${nestedHtml}`
+      : `
         <span class="insight-kpi-split__chip-label">${seg.label}${hintHtml}</span>
         <span class="${valueClass}">${displayVal}${chipUnit}</span>
-        ${rateHtml}`;
+        ${rateHtml}
+        ${nestedHtml}`;
 
     if (popoverKey) {
       const tipAttrs = chartTipDataAttrs(seg.label, displayVal, rateText);
       return `
       <button type="button"
-        class="insight-kpi-split__chip insight-kpi-split__chip--clickable"
+        class="insight-kpi-split__chip insight-kpi-split__chip--clickable${wideClass}${inlineClass}"
         style="--seg-color:${seg.color}"
         data-action="open-insight-popover"
         data-popover-type="${popoverKey}"
@@ -837,7 +935,7 @@ function renderInsightCompositeKpi(composite, pageId) {
     }
 
     return `
-      <span class="insight-kpi-split__chip" style="--seg-color:${seg.color}">
+      <span class="insight-kpi-split__chip${wideClass}${inlineClass}" style="--seg-color:${seg.color}">
         ${chipInner}
       </span>`;
   }).join('');
@@ -861,17 +959,25 @@ function renderInsightCompositeKpi(composite, pageId) {
           ${total.trend ? renderKpiTrend(total.trend) : ''}
         </span>`;
 
+  const compositionHtml = composite.showCompositionBar
+    ? renderKpiCompositionBar(segments, displayTotal, popoverPageId)
+    : '';
+  const compositionClass = composite.showCompositionBar ? ' insight-kpi-split--with-composition' : '';
+
   return `
-    <div class="insight-kpi-split${sizeClass}" style="--composite-accent:${accent}">
-      <div class="insight-kpi-split__total">
-        <span class="insight-kpi-split__total-label">${total.label || '合計'}</span>
-        ${totalFigureHtml}
-        ${subHtml}
+    <div class="insight-kpi-split${sizeClass}${compositionClass}" style="--composite-accent:${accent}">
+      <div class="insight-kpi-split__body">
+        <div class="insight-kpi-split__total">
+          <span class="insight-kpi-split__total-label">${total.label || '合計'}</span>
+          ${totalFigureHtml}
+          ${subHtml}
+        </div>
+        <div class="insight-kpi-split__equation" aria-label="内訳の合計">
+          <span class="insight-kpi-split__eq">＝</span>
+          <div class="insight-kpi-split__chips" style="--seg-count:${segments.length}">${chipsHtml}</div>
+        </div>
       </div>
-      <div class="insight-kpi-split__equation" aria-label="内訳の合計">
-        <span class="insight-kpi-split__eq">＝</span>
-        <div class="insight-kpi-split__chips" style="--seg-count:${segments.length}">${chipsHtml}</div>
-      </div>
+      ${compositionHtml}
     </div>`;
 }
 
@@ -1033,12 +1139,22 @@ function renderStackedBar(chart, pageId, chartTitle) {
   const series = chart.series || [];
   const totals = labels.map((_, i) => series.reduce((sum, s) => sum + (s.values?.[i] || 0), 0));
   const positiveTotals = totals.filter((t) => t > 0);
-  const max = Math.max(...positiveTotals, 1);
-  const dense = chart.denseLabels || labels.length > 12;
+  const dataMax = Number.isFinite(chart.yAxisMax) && chart.yAxisMax > 0
+    ? chart.yAxisMax
+    : Math.max(...positiveTotals, 1);
+  const useYAxis = chart.showYAxis || chartValueFormat(chart) === 'yen';
+  const axis = useYAxis ? computeChartYAxisTicks(dataMax) : { max: dataMax, ticks: [0, dataMax] };
+  const scaleMax = axis.max || dataMax;
+  const fitWidth = chart.layout === 'full';
+  const dense = !fitWidth && (chart.denseLabels || labels.length > 12);
+  const focusIdx = Number.isInteger(chart.focusIndex) ? chart.focusIndex : null;
+  const focusLabel = chart.focusLabel || '';
+  const hasSpotlight = focusIdx != null && focusIdx >= 0 && focusIdx < labels.length;
 
   const cols = labels.map((label, i) => {
     const total = totals[i];
-    const h = total > 0 ? (total / max) * 100 : 0;
+    const h = total > 0 ? (total / scaleMax) * 100 : 0;
+    const isFocus = hasSpotlight && i === focusIdx;
     const segs = total > 0
       ? series.map((s) => {
         const v = s.values?.[i] || 0;
@@ -1053,12 +1169,21 @@ function renderStackedBar(chart, pageId, chartTitle) {
       }).join('')
       : '';
     const colAttrs = chartPopoverDataAttrs(pageId, label, chartTitle, { value: total }, chart);
+    const labelInner = isFocus && focusLabel
+      ? `<span class="insight-bar-focus-badge">${focusLabel}</span><span class="insight-bar-label-text">${label}</span>`
+      : `<span class="insight-bar-label-text">${label}</span>`;
+    const labelClasses = [
+      'insight-bar-label',
+      total > 0 ? 'insight-chart-clickable insight-chart-clickable--label' : 'insight-bar-label--empty',
+      isFocus ? 'insight-bar-label--focus' : '',
+    ].filter(Boolean).join(' ');
     const labelHtml = total > 0
-      ? `<button type="button" class="insight-bar-label insight-chart-clickable insight-chart-clickable--label" ${colAttrs}>${label}</button>`
-      : `<span class="insight-bar-label insight-bar-label--empty">${label}</span>`;
+      ? `<button type="button" class="${labelClasses}" ${colAttrs}>${labelInner}</button>`
+      : `<span class="${labelClasses}">${labelInner}</span>`;
     return `
-      <div class="insight-bar-col${total > 0 ? '' : ' insight-bar-col--no-data'}">
+      <div class="insight-bar-col${total > 0 ? '' : ' insight-bar-col--no-data'}${isFocus ? ' insight-bar-col--focus' : ''}"${isFocus ? ' data-chart-focus="true"' : ''}>
         <div class="insight-bar-plot">
+          ${isFocus ? '<span class="insight-bar-focus-marker" aria-hidden="true"></span>' : ''}
           ${total > 0
             ? `<div class="insight-bar-stack" style="height:${h}%">${segs}</div>`
             : '<div class="insight-bar-col--empty" aria-hidden="true"></div>'}
@@ -1068,13 +1193,41 @@ function renderStackedBar(chart, pageId, chartTitle) {
   }).join('');
 
   const wrapClass = dense ? 'insight-chart-bars-wrap insight-chart-bars-wrap--scroll' : 'insight-chart-bars-wrap';
-  const barsClass = `insight-chart-bars insight-chart-bars--stacked${dense ? ' insight-chart-bars--dense' : ''}`;
-  const barsStyle = dense ? ` style="--bar-count:${labels.length}"` : '';
+  const barsClass = [
+    'insight-chart-bars',
+    'insight-chart-bars--stacked',
+    dense ? 'insight-chart-bars--dense' : '',
+    fitWidth ? 'insight-chart-bars--fit' : '',
+  ].filter(Boolean).join(' ');
+  const barsStyle = dense && !fitWidth ? ` style="--bar-count:${labels.length}"` : '';
 
-  return `
+  const barsBlock = `
     <div class="${wrapClass}">
       <div class="${barsClass}"${barsStyle}>${cols}</div>
-    </div>
+    </div>`;
+
+  const plotInner = useYAxis
+    ? `
+      <div class="insight-chart-plot-area">
+        <div class="insight-chart-y-grid" aria-hidden="true">
+          ${axis.ticks.slice().reverse().map(() => '<span class="insight-chart-y-grid-line"></span>').join('')}
+        </div>
+        ${barsBlock}
+      </div>`
+    : barsBlock;
+
+  const axisBlock = useYAxis
+    ? `
+    <div class="insight-chart-bars-with-axis">
+      <div class="insight-chart-y-axis" aria-hidden="true">
+        ${axis.ticks.slice().reverse().map((tick) => `<span class="insight-chart-y-axis-tick">${formatYAxisTickLabel(tick)}</span>`).join('')}
+      </div>
+      ${plotInner}
+    </div>`
+    : barsBlock;
+
+  return `
+    ${axisBlock}
     <div class="insight-chart-legend">
       ${series.map((s) => {
         const attrs = chartPopoverDataAttrs(pageId, s.name, chartTitle, {}, chart);
@@ -1120,28 +1273,128 @@ function renderGroupedBar(chart, pageId, chartTitle) {
 
 function renderSimpleBar(chart, pageId, chartTitle) {
   const values = chart.values || [];
-  const max = Math.max(...values, 1);
   const labels = chart.labels || [];
+  const dataMax = Number.isFinite(chart.yAxisMax) && chart.yAxisMax > 0
+    ? chart.yAxisMax
+    : Math.max(...values, chart.goal || 0, 1);
+  const useYAxis = chart.showYAxis || chartValueFormat(chart) === 'yen' || chart.unit === '%';
+  const axis = useYAxis ? computeChartYAxisTicks(dataMax) : { max: dataMax, ticks: [0, dataMax] };
+  const scaleMax = axis.max || dataMax;
 
-  return `
-    <div class="insight-chart-bars">
-      ${values.map((v, i) => {
-        const h = (v / max) * 100;
-        const label = labels[i] || '';
-        const attrs = chartPopoverDataAttrs(pageId, label, chartTitle, { value: v }, chart);
-        if (v <= 0) {
-          return `
+  const cols = values.map((v, i) => {
+    const h = v > 0 ? (v / scaleMax) * 100 : 0;
+    const label = labels[i] || '';
+    const attrs = chartPopoverDataAttrs(pageId, label, chartTitle, { value: v }, chart);
+    if (v <= 0) {
+      return `
           <div class="insight-bar-col insight-bar-col--no-data">
             <div class="insight-bar-col--empty" aria-hidden="true"></div>
             <span class="insight-bar-label insight-bar-label--empty">${label}</span>
           </div>`;
-        }
-        return `
+    }
+    return `
           <div class="insight-bar-col">
-            <button type="button" class="insight-bar-single insight-chart-clickable" style="height:${h}%;background:${chart.color || '#0ea5e9'}" ${attrs}></button>
+            <div class="insight-bar-plot">
+              <button type="button" class="insight-bar-single insight-chart-clickable" style="height:${h}%;background:${chart.color || '#0ea5e9'}" ${attrs}></button>
+            </div>
             <button type="button" class="insight-bar-label insight-chart-clickable insight-chart-clickable--label" ${attrs}>${label}</button>
           </div>`;
-      }).join('')}
+  }).join('');
+
+  const barsBlock = `<div class="insight-chart-bars">${cols}</div>`;
+  const plotInner = useYAxis
+    ? `<div class="insight-chart-plot-area">
+        <div class="insight-chart-y-grid" aria-hidden="true">
+          ${axis.ticks.slice().reverse().map(() => '<span class="insight-chart-y-grid-line"></span>').join('')}
+        </div>
+        ${barsBlock}
+      </div>`
+    : barsBlock;
+
+  if (!useYAxis) return barsBlock;
+
+  return `
+    <div class="insight-chart-bars-with-axis">
+      <div class="insight-chart-y-axis" aria-hidden="true">
+        ${axis.ticks.slice().reverse().map((tick) => {
+          const label = chart.unit === '%' ? `${tick}%` : formatYAxisTickLabel(tick);
+          return `<span class="insight-chart-y-axis-tick">${label}</span>`;
+        }).join('')}
+      </div>
+      ${plotInner}
+    </div>`;
+}
+
+function describePieSegment(cx, cy, r, startAngle, endAngle) {
+  let sweep = endAngle - startAngle;
+  if (sweep >= 2 * Math.PI - 0.0001) sweep = 2 * Math.PI - 0.0001;
+  if (sweep <= 0.0001) return '';
+
+  const start = polarToCartesian(cx, cy, r, startAngle);
+  const end = polarToCartesian(cx, cy, r, endAngle);
+  const largeArc = sweep > Math.PI ? 1 : 0;
+
+  return [
+    `M ${cx.toFixed(2)} ${cy.toFixed(2)}`,
+    `L ${start.x.toFixed(2)} ${start.y.toFixed(2)}`,
+    `A ${r} ${r} 0 ${largeArc} 1 ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
+    'Z',
+  ].join(' ');
+}
+
+function renderSurveyPie(chart, pageId, chartTitle) {
+  const segments = chart.segments || [];
+  const total = segments.reduce((s, seg) => s + Math.max(0, seg.value || 0), 0) || 1;
+  const cx = 100;
+  const cy = 100;
+  const r = 88;
+  let acc = 0;
+
+  const segParts = segments.map((seg, idx) => {
+    const v = Math.max(0, seg.value || 0);
+    const pct = total > 0 ? v / total : 0;
+    const startAngle = acc * 2 * Math.PI - Math.PI / 2;
+    acc += pct;
+    if (v <= 0) return { path: '', label: '' };
+    const endAngle = acc * 2 * Math.PI - Math.PI / 2;
+    const d = describePieSegment(cx, cy, r, startAngle, endAngle);
+    const midAngle = (startAngle + endAngle) / 2;
+    const labelR = r * 0.58;
+    const lx = cx + labelR * Math.cos(midAngle);
+    const ly = cy + labelR * Math.sin(midAngle);
+    const pctText = `${Math.round(pct * 1000) / 10}%`;
+    const attrs = chartPopoverDataAttrs(pageId, seg.label, chartTitle, {
+      value: v,
+      tipSub: pctText,
+      donutIdx: idx,
+    }, chart);
+    const path = d
+      ? `<path role="button" tabindex="0" class="insight-survey-pie-seg insight-chart-clickable" d="${d}" fill="${seg.color}" ${attrs} />`
+      : '';
+    const label = pct >= 0.08
+      ? `<text class="insight-survey-pie-label" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" dominant-baseline="middle">${pctText}</text>`
+      : '';
+    return { path, label };
+  });
+
+  return `
+    <div class="insight-survey-pie-wrap">
+      <svg class="insight-survey-pie-svg" viewBox="0 0 200 200" aria-label="${escapeHtml(chartTitle)}">
+        ${segParts.map((p) => p.path).join('')}
+        ${segParts.map((p) => p.label).join('')}
+      </svg>
+      <ul class="insight-survey-pie-legend">
+        ${segments.map((seg, idx) => {
+          const v = Math.max(0, seg.value || 0);
+          const pct = total > 0 ? Math.round((v / total) * 1000) / 10 : 0;
+          const attrs = chartPopoverDataAttrs(pageId, seg.label, chartTitle, {
+            value: v,
+            tipSub: `${pct}%`,
+            donutIdx: idx,
+          }, chart);
+          return `<li><button type="button" class="insight-survey-pie-legend-btn insight-chart-clickable" ${attrs}><i style="background:${seg.color}"></i><span>${seg.label}</span></button></li>`;
+        }).join('')}
+      </ul>
     </div>`;
 }
 
@@ -1226,7 +1479,10 @@ function renderCompareLine(chart, pageId, chartTitle) {
   const labels = chart.labels || [];
   const current = chart.current || [];
   const compare = chart.compare || [];
-  const max = Math.max(...current, ...compare, 1);
+  const dataMax = Math.max(...current, ...compare, 1);
+  const useYAxis = chart.showYAxis;
+  const axis = useYAxis ? computeChartYAxisTicks(dataMax) : { max: dataMax, ticks: [0, dataMax] };
+  const max = axis.max || dataMax;
   const h = 120;
 
   const toPoints = (vals) => vals.map((v, i) => {
@@ -1235,7 +1491,7 @@ function renderCompareLine(chart, pageId, chartTitle) {
     return `${x},${y}`;
   }).join(' ');
 
-  return `
+  const chartBody = `
     <div class="insight-line-chart">
       <svg viewBox="0 0 100 ${h}" preserveAspectRatio="none" class="insight-line-svg" aria-hidden="true">
         <polyline class="insight-line insight-line--compare" points="${toPoints(compare)}" />
@@ -1256,12 +1512,25 @@ function renderCompareLine(chart, pageId, chartTitle) {
         <button type="button" class="insight-legend-item insight-chart-clickable insight-chart-clickable--legend" ${chartPopoverDataAttrs(pageId, chart.compareLabel || '比較', chartTitle, {}, chart)}><i style="background:#cbd5e1"></i>${chart.compareLabel || '比較'}</button>
       </div>
     </div>`;
+
+  if (!useYAxis) return chartBody;
+
+  return `
+    <div class="insight-chart-bars-with-axis insight-chart-bars-with-axis--line">
+      <div class="insight-chart-y-axis" aria-hidden="true">
+        ${axis.ticks.slice().reverse().map((tick) => `<span class="insight-chart-y-axis-tick">${formatYAxisTickLabel(tick)}</span>`).join('')}
+      </div>
+      ${chartBody}
+    </div>`;
 }
 
 function renderSparkline(chart, pageId, chartTitle) {
   const values = chart.values || [];
-  const max = Math.max(...values, chart.goal || 0, 1);
-  const min = Math.min(...values, chart.goal || values[0] || 0);
+  const dataMax = Math.max(...values, chart.goal || 0, 1);
+  const useYAxis = chart.showYAxis;
+  const axis = useYAxis ? computeChartYAxisTicks(dataMax) : null;
+  const max = axis?.max || dataMax;
+  const min = useYAxis ? 0 : Math.min(...values, chart.goal || values[0] || 0);
   const range = max - min || 1;
   const h = 80;
   const labels = chart.labels || [];
@@ -1275,7 +1544,7 @@ function renderSparkline(chart, pageId, chartTitle) {
   const goalY = chart.goal != null ? h - ((chart.goal - min) / range) * (h - 12) - 6 : null;
   const lastVal = values[values.length - 1];
 
-  return `
+  const chartBody = `
     <div class="insight-sparkline">
       <button type="button" class="insight-sparkline-value insight-chart-clickable" ${chartPopoverDataAttrs(pageId, labels[labels.length - 1] || chartTitle, chartTitle, { value: lastVal }, chart)}>${formatInsightChartValue(lastVal, chart)}</button>
       <svg viewBox="0 0 100 ${h}" preserveAspectRatio="none" class="insight-line-svg" aria-hidden="true">
@@ -1289,6 +1558,19 @@ function renderSparkline(chart, pageId, chartTitle) {
         }).join('')}
       </div>
       ${chart.goal != null ? `<div class="insight-sparkline-goal">目標 ${formatInsightChartValue(chart.goal, chart)}</div>` : ''}
+    </div>`;
+
+  if (!useYAxis) return chartBody;
+
+  return `
+    <div class="insight-chart-bars-with-axis insight-chart-bars-with-axis--line">
+      <div class="insight-chart-y-axis" aria-hidden="true">
+        ${axis.ticks.slice().reverse().map((tick) => {
+          const label = chart.unit === '%' ? `${tick}%` : formatYAxisTickLabel(tick);
+          return `<span class="insight-chart-y-axis-tick">${label}</span>`;
+        }).join('')}
+      </div>
+      ${chartBody}
     </div>`;
 }
 
@@ -1401,6 +1683,59 @@ function renderScatterHint(chart, pageId, chartTitle) {
     </div>`;
 }
 
+function riskLevelClass(level) {
+  if (level === '高') return 'insight-risk-level--high';
+  if (level === '中') return 'insight-risk-level--mid';
+  return 'insight-risk-level--low';
+}
+
+function renderRiskTable(chart, pageId, chartTitle) {
+  const rows = chart.rows || [];
+  const initial = chart.initialVisible || 10;
+  const columns = chart.columns || [];
+  const hasMore = rows.length > initial;
+  const chartId = chart.id || `risk-${Math.random().toString(36).slice(2, 7)}`;
+
+  const bodyRows = rows.map((row, idx) => {
+    const hiddenClass = idx >= initial ? ' insight-risk-row--hidden' : '';
+    const attrs = [
+      'type="button"',
+      'class="insight-risk-row insight-table-row--clickable' + hiddenClass + '"',
+      'data-action="open-insight-popover"',
+      'data-popover-type="insightAtRiskPatient"',
+      'data-popover-patient-id="' + escapeHtml(row.id) + '"',
+      'data-popover-label="' + escapeHtml(row.name) + '"',
+      'data-popover-item-label="' + escapeHtml(row.name) + '"',
+      'data-chart-title="' + escapeHtml(chartTitle) + '"',
+      'aria-expanded="false"',
+      'aria-label="' + escapeHtml(row.name) + 'の予約履歴を表示"',
+    ].join(' ');
+    return `<tr ${attrs}>
+      <td>${escapeHtml(row.name)}</td>
+      <td>${escapeHtml(row.lastVisit)}</td>
+      <td>${escapeHtml(row.nextAppt)}</td>
+      <td>${row.cancelPastYear}</td>
+      <td>${escapeHtml(String(row.cancelRate))}</td>
+      <td><span class="insight-risk-level ${riskLevelClass(row.riskLevel)}">${row.riskScore} <small>${row.riskLevel}</small></span></td>
+    </tr>`;
+  }).join('');
+
+  const expandBtn = hasMore
+    ? `<button type="button" class="insight-risk-expand" data-action="expand-risk-table" data-risk-chart="${chartId}" data-initial="${initial}">
+        さらに表示（残り${rows.length - initial}名）
+      </button>`
+    : '';
+
+  return `
+    <div class="insight-risk-table-wrap" data-risk-chart-id="${chartId}" data-risk-initial="${initial}">
+      <table class="insight-table insight-risk-table">
+        <thead><tr>${columns.map((c) => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+      ${expandBtn}
+    </div>`;
+}
+
 function renderChart(chart, pageId) {
   const chartTitle = chart.title || '';
   const renderers = {
@@ -1416,6 +1751,8 @@ function renderChart(chart, pageId) {
     table: renderTable,
     heatmap: renderHeatmap,
     'scatter-hint': renderScatterHint,
+    'risk-table': renderRiskTable,
+    'survey-pie': renderSurveyPie,
   };
   const fn = renderers[chart.type];
   return fn ? fn(chart, pageId, chartTitle) : '';
@@ -1506,6 +1843,7 @@ function onInsightToolbarClick(e) {
     e.preventDefault();
     if (pageBtn.dataset.insightPage !== insightState.page) {
       navigateInsight({ page: pageBtn.dataset.insightPage });
+      if (typeof pageBtn.blur === 'function') pageBtn.blur();
     }
     return;
   }
@@ -1543,14 +1881,53 @@ function ensureInsightShell(root) {
 }
 
 function renderInsightChartCardInner(chart, pageId) {
+  const focusIdx = Number.isInteger(chart.focusIndex) ? chart.focusIndex : null;
+  const focusLabel = chart.focusLabel || '';
+  const focusDate = focusIdx != null && chart.labels?.[focusIdx] ? chart.labels[focusIdx] : '';
+  const focusPill = focusLabel && focusDate
+    ? `<span class="insight-chart-focus-pill" aria-label="${focusLabel} ${focusDate} を表示中">
+        <span class="insight-chart-focus-pill-dot" aria-hidden="true"></span>
+        ${focusLabel} ${focusDate}
+      </span>`
+    : '';
   return `
-    <section class="insight-chart-card insight-chart-card--interactive">
+    <section class="insight-chart-card insight-chart-card--interactive${focusPill ? ' insight-chart-card--focused' : ''}">
       <header class="insight-chart-header">
-        <h2 class="insight-chart-title">${chart.title}</h2>
-        ${chart.subtitle ? `<p class="insight-chart-subtitle">${chart.subtitle}</p>` : ''}
+        <div class="insight-chart-header__main">
+          <h2 class="insight-chart-title">${chart.title}</h2>
+          ${chart.subtitle ? `<p class="insight-chart-subtitle">${chart.subtitle}</p>` : ''}
+        </div>
+        ${focusPill}
       </header>
       <div class="insight-chart-body">${renderChart(chart, pageId)}</div>
     </section>`;
+}
+
+function initInsightChartFocus(scope) {
+  const focusCol = scope?.querySelector('[data-chart-focus="true"]');
+  if (!focusCol) return;
+  requestAnimationFrame(() => {
+    const scrollWrap = focusCol.closest('.insight-chart-bars-wrap--scroll');
+    if (scrollWrap) {
+      const wrapRect = scrollWrap.getBoundingClientRect();
+      const colRect = focusCol.getBoundingClientRect();
+      scrollWrap.scrollLeft += colRect.left - wrapRect.left - (wrapRect.width / 2) + (colRect.width / 2);
+    }
+    focusCol.classList.add('insight-bar-col--focus-enter');
+    window.setTimeout(() => focusCol.classList.remove('insight-bar-col--focus-enter'), 800);
+  });
+}
+
+function scheduleInsightLayoutPass(content) {
+  if (!content) return;
+  fitCompositeKpiValues(content);
+  requestAnimationFrame(() => {
+    fitCompositeKpiValues(content);
+    initInsightChartFocus(content);
+  });
+  if (document.fonts?.ready) {
+    document.fonts.ready.then(() => fitCompositeKpiValues(content));
+  }
 }
 
 function renderInsightChartsMarkup(charts, pageId) {
@@ -1567,7 +1944,11 @@ function renderInsightChartsMarkup(charts, pageId) {
     key,
     renderInsightChartCardInner(chart, pageId),
     index,
-    { hideHandle },
+    {
+      hideHandle,
+      fullWidth: chart.layout === 'full',
+      halfWidth: chart.layout === 'half',
+    },
   )).join('');
 }
 
@@ -1586,11 +1967,9 @@ function renderInsightContent() {
   `;
 
   initInsightCardDrag(content);
-
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => fitCompositeKpiValues(content));
-  });
+  scheduleInsightLayoutPass(content);
   bindInsightPopoverTriggers(content);
+  bindRiskTableControls(content);
   bindInsightChartTooltips(content);
   bindDonutHoverSync(content);
 }
@@ -1688,6 +2067,23 @@ function bindDonutHoverSync(scope = document) {
   });
 }
 
+function bindRiskTableControls(scope = document) {
+  scope.querySelectorAll('[data-action="expand-risk-table"]').forEach((btn) => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const wrap = btn.closest('.insight-risk-table-wrap');
+      if (!wrap) return;
+      wrap.querySelectorAll('.insight-risk-row--hidden').forEach((row) => {
+        row.classList.remove('insight-risk-row--hidden');
+      });
+      btn.remove();
+    });
+  });
+}
+
 function bindInsightPopoverTriggers(scope = document) {
   if (typeof openPopover !== 'function') return;
 
@@ -1707,6 +2103,7 @@ function bindInsightPopoverTriggers(scope = document) {
         period: insightState.period,
         value: btn.dataset.popoverValue,
         series: btn.dataset.popoverSeries,
+        patientId: btn.dataset.popoverPatientId,
       })
       : {};
 
