@@ -1134,6 +1134,10 @@ function describeDonutSegment(cx, cy, rOut, rIn, startAngle, endAngle) {
   ].join(' ');
 }
 
+function insightDateLabelClass(label) {
+  return typeof chartDateLabelClass === 'function' ? chartDateLabelClass(label) : '';
+}
+
 function renderStackedBar(chart, pageId, chartTitle) {
   const labels = chart.labels || [];
   const series = chart.series || [];
@@ -1176,6 +1180,7 @@ function renderStackedBar(chart, pageId, chartTitle) {
       'insight-bar-label',
       total > 0 ? 'insight-chart-clickable insight-chart-clickable--label' : 'insight-bar-label--empty',
       isFocus ? 'insight-bar-label--focus' : '',
+      insightDateLabelClass(label),
     ].filter(Boolean).join(' ');
     const labelHtml = total > 0
       ? `<button type="button" class="${labelClasses}" ${colAttrs}>${labelInner}</button>`
@@ -1246,8 +1251,8 @@ function renderGroupedBar(chart, pageId, chartTitle) {
       ${labels.map((label, i) => {
         const colTotal = groups.reduce((s, g) => s + (g.values?.[i] || 0), 0);
         const labelHtml = colTotal > 0
-          ? `<button type="button" class="insight-bar-label insight-chart-clickable insight-chart-clickable--label" ${chartPopoverDataAttrs(pageId, label, chartTitle, {}, chart)}>${label}</button>`
-          : `<span class="insight-bar-label insight-bar-label--empty">${label}</span>`;
+          ? `<button type="button" class="insight-bar-label insight-chart-clickable insight-chart-clickable--label ${insightDateLabelClass(label)}" ${chartPopoverDataAttrs(pageId, label, chartTitle, {}, chart)}>${label}</button>`
+          : `<span class="insight-bar-label insight-bar-label--empty ${insightDateLabelClass(label)}">${label}</span>`;
         return `
         <div class="insight-bar-col insight-bar-col--grouped${colTotal > 0 ? '' : ' insight-bar-col--no-data'}">
           <div class="insight-bar-group">
@@ -1289,7 +1294,7 @@ function renderSimpleBar(chart, pageId, chartTitle) {
       return `
           <div class="insight-bar-col insight-bar-col--no-data">
             <div class="insight-bar-col--empty" aria-hidden="true"></div>
-            <span class="insight-bar-label insight-bar-label--empty">${label}</span>
+            <span class="insight-bar-label insight-bar-label--empty ${insightDateLabelClass(label)}">${label}</span>
           </div>`;
     }
     return `
@@ -1297,7 +1302,7 @@ function renderSimpleBar(chart, pageId, chartTitle) {
             <div class="insight-bar-plot">
               <button type="button" class="insight-bar-single insight-chart-clickable" style="height:${h}%;background:${chart.color || '#0ea5e9'}" ${attrs}></button>
             </div>
-            <button type="button" class="insight-bar-label insight-chart-clickable insight-chart-clickable--label" ${attrs}>${label}</button>
+            <button type="button" class="insight-bar-label insight-chart-clickable insight-chart-clickable--label ${insightDateLabelClass(label)}" ${attrs}>${label}</button>
           </div>`;
   }).join('');
 
@@ -1504,7 +1509,7 @@ function renderCompareLine(chart, pageId, chartTitle) {
             value: current[i],
             tipSub: compareVal != null ? `比較 ${formatInsightChartValue(compareVal, chart)}` : '',
           }, chart);
-          return `<button type="button" class="insight-line-label-btn insight-chart-clickable" ${attrs}>${l}</button>`;
+          return `<button type="button" class="insight-line-label-btn insight-chart-clickable ${insightDateLabelClass(l)}" ${attrs}>${l}</button>`;
         }).join('')}
       </div>
       <div class="insight-chart-legend">
@@ -1554,7 +1559,7 @@ function renderSparkline(chart, pageId, chartTitle) {
       <div class="insight-line-labels insight-line-labels--clickable">
         ${labels.map((l, i) => {
           const attrs = chartPopoverDataAttrs(pageId, l, chartTitle, { value: values[i] }, chart);
-          return `<button type="button" class="insight-line-label-btn insight-chart-clickable" ${attrs}>${l}</button>`;
+          return `<button type="button" class="insight-line-label-btn insight-chart-clickable ${insightDateLabelClass(l)}" ${attrs}>${l}</button>`;
         }).join('')}
       </div>
       ${chart.goal != null ? `<div class="insight-sparkline-goal">目標 ${formatInsightChartValue(chart.goal, chart)}</div>` : ''}
@@ -1885,9 +1890,9 @@ function renderInsightChartCardInner(chart, pageId) {
   const focusLabel = chart.focusLabel || '';
   const focusDate = focusIdx != null && chart.labels?.[focusIdx] ? chart.labels[focusIdx] : '';
   const focusPill = focusLabel && focusDate
-    ? `<span class="insight-chart-focus-pill" aria-label="${focusLabel} ${focusDate} を表示中">
+    ? `<span class="insight-chart-focus-pill ${insightDateLabelClass(focusDate)}" aria-label="${focusLabel} ${focusDate} を表示中">
         <span class="insight-chart-focus-pill-dot" aria-hidden="true"></span>
-        ${focusLabel} ${focusDate}
+        ${focusLabel} <span class="${insightDateLabelClass(focusDate)}">${focusDate}</span>
       </span>`
     : '';
   return `

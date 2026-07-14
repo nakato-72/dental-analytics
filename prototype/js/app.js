@@ -13,6 +13,13 @@ const state = {
   expanded: { 'clinic-sakura': true },
   intelPanelOrder: null,
   navOrder: null,
+  sidebarView: 'nav', // 'nav' | 'settings'
+  settingsPage: null, // null | 'holidays'
+  settingsCalYear: 2026,
+  settingsCalMonth: 6,
+  settingsVersionId: null,
+  settingsDraft: null, // 休日設定画面の未保存下書き
+  settingsAddForm: { from: '', note: '' },
 };
 
 const INTEL_PANEL_ORDER_STORAGE_KEY = 'intelPanelOrder';
@@ -771,8 +778,54 @@ function isActive(level, id, role) {
 }
 
 // --- Render Navigation ---
+function renderSettingsNav() {
+  const items = [
+    {
+      id: 'holidays',
+      label: '休日設定',
+      desc: '医院の休診日を登録',
+      action: 'open-holiday-settings',
+      icon: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,
+    },
+  ];
+
+  return `
+    <li class="nav-item nav-item--settings-header">
+      <div class="nav-row nav-row--settings-back" data-action="close-sidebar-settings" role="button" tabindex="0">
+        <span class="nav-settings-back-icon" aria-hidden="true">←</span>
+        <span class="nav-label">設定</span>
+      </div>
+    </li>
+    ${items.map((item) => {
+      const active = state.settingsPage === item.id;
+      return `
+      <li class="nav-item">
+        <button type="button" class="nav-row nav-row--settings-item${active ? ' nav-row--settings-item-active' : ''}" data-action="${item.action}" data-settings-id="${item.id}" aria-current="${active ? 'page' : 'false'}">
+          <span class="nav-settings-item-icon">${item.icon}</span>
+          <span class="nav-settings-item-text">
+            <span class="nav-label">${item.label}</span>
+            <span class="nav-settings-item-desc">${item.desc}</span>
+          </span>
+        </button>
+      </li>`;
+    }).join('')}
+  `;
+}
+
 function renderNav() {
   const tree = document.getElementById('nav-tree');
+  if (!tree) return;
+
+  const sidebar = document.getElementById('sidebar');
+  if (sidebar) {
+    sidebar.classList.toggle('sidebar--settings', state.sidebarView === 'settings');
+  }
+
+  if (state.sidebarView === 'settings') {
+    tree.innerHTML = renderSettingsNav();
+    return;
+  }
+
   let html = '';
 
   for (const clinic of getOrderedClinics()) {
@@ -1008,7 +1061,7 @@ function buildChartBars(labels, highlightIndex, renderPlotCell, compareValues, a
 
   const labelCells = labels.map((label, i) => `
     <div class="detail-bar-label-cell ${i === highlightIndex ? 'highlight' : ''}">
-      <span class="detail-bar-label">${label}</span>
+      <span class="detail-bar-label ${typeof chartDateLabelClass === 'function' ? chartDateLabelClass(label) : ''}">${label}</span>
     </div>
   `).join('');
 
@@ -1883,6 +1936,7 @@ function renderMeta() {
 
   const badgeText = meta.isRealData ? '実データ表示中' : 'モックデータ';
   const badgeClass = meta.isRealData ? 'sidebar-data-badge badge-live' : 'sidebar-data-badge badge-live badge-mock';
+  const settingsOpen = state.sidebarView === 'settings';
 
   footer.innerHTML = `
     <button type="button" class="sidebar-upload-btn" id="sidebar-upload-btn">
@@ -1893,6 +1947,21 @@ function renderMeta() {
       </svg>
       データをアップロード
     </button>
+    <div class="sidebar-footer-tools">
+      <button type="button"
+        class="sidebar-settings-btn${settingsOpen ? ' sidebar-settings-btn--active' : ''}"
+        id="sidebar-settings-btn"
+        data-action="toggle-sidebar-settings"
+        aria-pressed="${settingsOpen ? 'true' : 'false'}"
+        aria-label="設定"
+        title="設定">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        <span>設定</span>
+      </button>
+    </div>
     <input type="file" class="sidebar-file-input" accept=".csv,.xlsx,.xls" hidden>
     <div class="sidebar-data-meta">
       <span class="${badgeClass}">${badgeText}</span>
@@ -1905,12 +1974,873 @@ function renderMeta() {
   `;
 }
 
+async function toggleSidebarSettings() {
+  if (state.sidebarView === 'settings') await closeSidebarSettings();
+  else openSidebarSettings();
+}
+
+function getHolidaySettingsClinicId() {
+  if (typeof insightState !== 'undefined' && insightState.clinicId) return insightState.clinicId;
+  if (typeof state !== 'undefined' && state.clinicId) return state.clinicId;
+  return MOCK_DATA?.clinics?.[0]?.id || 'clinic-sakura';
+}
+
+function getHolidaySettingsClinicName(clinicId) {
+  const clinic = typeof getClinicById === 'function'
+    ? getClinicById(clinicId)
+    : MOCK_DATA?.clinics?.find((c) => c.id === clinicId);
+  return clinic?.name || '医院';
+}
+
+function getAppMainRoot() {
+  return document.getElementById('insight-main') || document.getElementById('main-content');
+}
+
+function formatHolidayKeyLabel(key) {
+  const parsed = typeof parseDateKey === 'function' ? parseDateKey(key) : null;
+  if (!parsed) return key;
+  const weekday = (typeof WEEKDAY_LABELS_JP !== 'undefined' ? WEEKDAY_LABELS_JP : ['日', '月', '火', '水', '木', '金', '土'])[
+    typeof getWeekday === 'function' ? getWeekday(parsed.year, parsed.month, parsed.day) : 0
+  ];
+  const pub = typeof getPublicHolidayName === 'function'
+    ? getPublicHolidayName(parsed.year, parsed.month, parsed.day)
+    : null;
+  return `${parsed.month}/${parsed.day}（${weekday}）${pub ? ` · ${pub}` : ''}`;
+}
+
+function cloneHolidaySettings(settings) {
+  return JSON.parse(JSON.stringify(settings || {}));
+}
+
+function getActiveHolidaySettingsDraft(clinicId) {
+  if (state.settingsPage !== 'holidays') return null;
+  if (!state.settingsDraft || state.settingsDraft._clinicId !== clinicId) return null;
+  const { _clinicId, ...rest } = state.settingsDraft;
+  return rest;
+}
+
+function ensureHolidaySettingsDraft(clinicId = getHolidaySettingsClinicId()) {
+  const id = clinicId;
+  if (state.settingsDraft && state.settingsDraft._clinicId === id) {
+    return state.settingsDraft;
+  }
+  const persisted = typeof getClinicCalendarSettings === 'function'
+    ? getClinicCalendarSettings(id, { persisted: true })
+    : { versions: [], specialClosed: [], specialOpen: [] };
+  state.settingsDraft = {
+    _clinicId: id,
+    ...cloneHolidaySettings(persisted),
+  };
+  return state.settingsDraft;
+}
+
+function clearHolidaySettingsDraft() {
+  state.settingsDraft = null;
+}
+
+function resetHolidayAddForm() {
+  state.settingsAddForm = { from: '', note: '' };
+}
+
+function getHolidayAddForm() {
+  if (!state.settingsAddForm) resetHolidayAddForm();
+  return state.settingsAddForm;
+}
+
+function syncHolidayAddFormFromDom() {
+  const form = getHolidayAddForm();
+  const fromInput = document.getElementById('settings-new-version-from');
+  const noteInput = document.getElementById('settings-new-version-note');
+  if (fromInput) form.from = fromInput.value || '';
+  if (noteInput) form.note = noteInput.value || '';
+}
+
+function normalizeSettingsComparePayload(settings) {
+  return {
+    versions: [...(settings?.versions || [])]
+      .map((v) => ({
+        id: v.id,
+        effectiveFrom: v.effectiveFrom,
+        note: v.note || '',
+        weeklyClosed: [...(v.weeklyClosed || [])].sort((a, b) => a - b),
+        schedule: v.schedule || {},
+      }))
+      .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom)),
+    specialClosed: [...(settings?.specialClosed || [])].sort(),
+    specialOpen: [...(settings?.specialOpen || [])].sort(),
+  };
+}
+
+function isHolidaySettingsDirty(clinicId = getHolidaySettingsClinicId()) {
+  if (state.settingsPage !== 'holidays') return false;
+  syncHolidayAddFormFromDom();
+  const form = getHolidayAddForm();
+  if ((form.from || '').trim() || (form.note || '').trim()) return true;
+  if (!state.settingsDraft || state.settingsDraft._clinicId !== clinicId) return false;
+  const draft = getActiveHolidaySettingsDraft(clinicId);
+  const persisted = getClinicCalendarSettings(clinicId, { persisted: true });
+  return JSON.stringify(normalizeSettingsComparePayload(draft))
+    !== JSON.stringify(normalizeSettingsComparePayload(persisted));
+}
+
+function showSettingsToast(message) {
+  let host = document.getElementById('settings-toast-host');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'settings-toast-host';
+    host.className = 'settings-toast-host';
+    document.body.appendChild(host);
+  }
+  const toast = document.createElement('div');
+  toast.className = 'settings-toast';
+  toast.setAttribute('role', 'status');
+  toast.textContent = message;
+  host.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('is-visible'));
+  window.setTimeout(() => {
+    toast.classList.remove('is-visible');
+    window.setTimeout(() => toast.remove(), 220);
+  }, 2200);
+}
+
+function showUnsavedSettingsDialog() {
+  return new Promise((resolve) => {
+    const existing = document.getElementById('settings-unsaved-dialog');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'settings-unsaved-dialog';
+    overlay.className = 'settings-unsaved-dialog';
+    overlay.innerHTML = `
+      <div class="settings-unsaved-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="settings-unsaved-title">
+        <h3 id="settings-unsaved-title" class="settings-unsaved-dialog__title">確認</h3>
+        <p class="settings-unsaved-dialog__body">情報が更新されています。変更を保存しますか？</p>
+        <div class="settings-unsaved-dialog__actions">
+          <button type="button" class="settings-unsaved-dialog__btn settings-unsaved-dialog__btn--primary" data-choice="yes">はい</button>
+          <button type="button" class="settings-unsaved-dialog__btn" data-choice="no">いいえ</button>
+          <button type="button" class="settings-unsaved-dialog__btn" data-choice="cancel">キャンセル</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const finish = (choice) => {
+      overlay.remove();
+      resolve(choice);
+    };
+    overlay.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-choice]');
+      if (btn) {
+        finish(btn.dataset.choice);
+        return;
+      }
+      if (e.target === overlay) finish('cancel');
+    });
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', onKey, true);
+        finish('cancel');
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+  });
+}
+
+async function confirmLeaveHolidaySettings(clinicId = getHolidaySettingsClinicId()) {
+  if (!isHolidaySettingsDirty(clinicId)) return true;
+  const choice = await showUnsavedSettingsDialog();
+  if (choice === 'cancel') return false;
+  if (choice === 'yes') {
+    ensureHolidaySettingsDraft(clinicId);
+    commitDraftVersions(clinicId);
+    commitDraftSpecialDays(clinicId);
+    resetHolidayAddForm();
+    showSettingsToast('更新しました。');
+    return true;
+  }
+  clearHolidaySettingsDraft();
+  resetHolidayAddForm();
+  return true;
+}
+
+function leaveHolidaySettingsView() {
+  state.settingsPage = null;
+  clearHolidaySettingsDraft();
+  resetHolidayAddForm();
+  restoreAppMainView();
+}
+
+function findDraftVersion(draft, versionId) {
+  return (draft.versions || []).find((v) => v.id === versionId) || null;
+}
+
+function draftToggleWeeklyClosed(weekday, versionId) {
+  const draft = ensureHolidaySettingsDraft();
+  const ver = findDraftVersion(draft, versionId || state.settingsVersionId);
+  if (!ver) return;
+  const day = Number(weekday);
+  const set = new Set(ver.weeklyClosed || []);
+  if (set.has(day)) set.delete(day);
+  else set.add(day);
+  ver.weeklyClosed = [...set].sort((a, b) => a - b);
+  if (!ver.schedule) ver.schedule = {};
+  const row = ver.schedule[day] || {};
+  const closed = set.has(day);
+  ver.schedule[day] = {
+    ...row,
+    closed,
+    openStart: closed ? '' : (row.openStart || '09:00'),
+    openEnd: closed ? '' : (row.openEnd || '18:30'),
+    breakStart: closed ? '' : (row.breakStart || '13:00'),
+    breakEnd: closed ? '' : (row.breakEnd || '14:30'),
+  };
+}
+
+function draftUpdateWeekdaySchedule(weekday, patch, versionId) {
+  const draft = ensureHolidaySettingsDraft();
+  const ver = findDraftVersion(draft, versionId || state.settingsVersionId);
+  if (!ver) return;
+  const day = Number(weekday);
+  const closed = (ver.weeklyClosed || []).includes(day);
+  if (!ver.schedule) ver.schedule = {};
+  ver.schedule[day] = {
+    ...(ver.schedule[day] || {}),
+    ...patch,
+    closed,
+  };
+  if (closed) {
+    ver.schedule[day].openStart = '';
+    ver.schedule[day].openEnd = '';
+    ver.schedule[day].breakStart = '';
+    ver.schedule[day].breakEnd = '';
+  }
+}
+
+function draftCycleSpecialDay(year, month, day) {
+  const draft = ensureHolidaySettingsDraft();
+  const key = typeof toDateKey === 'function'
+    ? toDateKey(year, month, day)
+    : `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const weekday = typeof getWeekday === 'function' ? getWeekday(year, month, day) : 0;
+  const snap = typeof resolveScheduleVersion === 'function'
+    ? resolveScheduleVersion(draft, key)
+    : (draft.versions || [])[0];
+  const weeklyClosed = (snap?.weeklyClosed || []).includes(weekday);
+  const closedSet = new Set(draft.specialClosed || []);
+  const openSet = new Set(draft.specialOpen || []);
+
+  if (closedSet.has(key)) closedSet.delete(key);
+  else if (openSet.has(key)) openSet.delete(key);
+  else if (weeklyClosed) openSet.add(key);
+  else closedSet.add(key);
+
+  draft.specialClosed = [...closedSet].sort();
+  draft.specialOpen = [...openSet].sort();
+}
+
+function draftApplyVersionMeta(versionId, { effectiveFrom, note } = {}) {
+  const draft = ensureHolidaySettingsDraft();
+  const ver = findDraftVersion(draft, versionId);
+  if (!ver) return { ok: false, reason: 'missing' };
+  if (effectiveFrom != null && effectiveFrom !== '') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) return { ok: false, reason: 'invalid' };
+    const conflict = (draft.versions || []).some((v) => v.id !== versionId && v.effectiveFrom === effectiveFrom);
+    if (conflict) return { ok: false, reason: 'conflict' };
+    ver.effectiveFrom = effectiveFrom;
+  }
+  if (note != null) ver.note = String(note);
+  return { ok: true };
+}
+
+function draftAddScheduleVersion(effectiveFrom, note, sourceVersionId) {
+  const draft = ensureHolidaySettingsDraft();
+  const from = String(effectiveFrom || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return null;
+  if ((draft.versions || []).some((v) => v.effectiveFrom === from)) return null;
+
+  const source = findDraftVersion(draft, sourceVersionId)
+    || (typeof resolveScheduleVersion === 'function'
+      ? resolveScheduleVersion(draft, from)
+      : draft.versions[draft.versions.length - 1]);
+  const id = typeof createVersionId === 'function'
+    ? createVersionId()
+    : `ver-${Date.now()}`;
+  const ver = typeof normalizeScheduleVersion === 'function'
+    ? normalizeScheduleVersion({
+      id,
+      effectiveFrom: from,
+      note: note || `${from.slice(0, 7).replace('-', '/')}〜`,
+      weeklyClosed: source?.weeklyClosed,
+      schedule: source?.schedule,
+    })
+    : {
+      id,
+      effectiveFrom: from,
+      note: note || '',
+      weeklyClosed: [...(source?.weeklyClosed || [0])],
+      schedule: cloneHolidaySettings(source?.schedule || {}),
+    };
+  draft.versions.push(ver);
+  return ver.id;
+}
+
+function draftDeleteScheduleVersion(versionId) {
+  const draft = ensureHolidaySettingsDraft();
+  if ((draft.versions || []).length <= 1) return false;
+  draft.versions = draft.versions.filter((v) => v.id !== versionId);
+  return draft.versions.length > 0;
+}
+
+function commitDraftVersions(clinicId = getHolidaySettingsClinicId()) {
+  const draft = ensureHolidaySettingsDraft(clinicId);
+  const persisted = getClinicCalendarSettings(clinicId, { persisted: true });
+  setClinicCalendarSettings(clinicId, {
+    ...persisted,
+    versions: cloneHolidaySettings(draft.versions),
+  });
+  const saved = getClinicCalendarSettings(clinicId, { persisted: true });
+  draft.versions = cloneHolidaySettings(saved.versions);
+}
+
+function commitDraftSpecialDays(clinicId = getHolidaySettingsClinicId()) {
+  const draft = ensureHolidaySettingsDraft(clinicId);
+  const persisted = getClinicCalendarSettings(clinicId, { persisted: true });
+  setClinicCalendarSettings(clinicId, {
+    ...persisted,
+    specialClosed: [...(draft.specialClosed || [])],
+    specialOpen: [...(draft.specialOpen || [])],
+  });
+  const saved = getClinicCalendarSettings(clinicId, { persisted: true });
+  draft.specialClosed = [...(saved.specialClosed || [])];
+  draft.specialOpen = [...(saved.specialOpen || [])];
+}
+
+function selectLatestSettingsVersion(clinicId) {
+  const settings = typeof getClinicCalendarSettings === 'function'
+    ? getClinicCalendarSettings(clinicId)
+    : { versions: [] };
+  const versions = typeof getSortedScheduleVersions === 'function'
+    ? getSortedScheduleVersions(settings)
+    : [...(settings.versions || [])].sort((a, b) => String(a.effectiveFrom).localeCompare(String(b.effectiveFrom)));
+  state.settingsVersionId = versions.length ? versions[versions.length - 1].id : null;
+  return state.settingsVersionId;
+}
+
+function ensureSettingsVersionSelection(clinicId) {
+  const settings = typeof getClinicCalendarSettings === 'function'
+    ? getClinicCalendarSettings(clinicId)
+    : { versions: [] };
+  const versions = typeof getSortedScheduleVersions === 'function'
+    ? getSortedScheduleVersions(settings)
+    : (settings.versions || []);
+  if (!versions.length) {
+    state.settingsVersionId = null;
+    return null;
+  }
+  if (state.settingsVersionId && versions.some((v) => v.id === state.settingsVersionId)) {
+    return versions.find((v) => v.id === state.settingsVersionId);
+  }
+  state.settingsVersionId = versions[versions.length - 1].id;
+  return versions[versions.length - 1];
+}
+
+function defaultNextVersionStartDate() {
+  const shifted = typeof shiftCalendarMonth === 'function'
+    ? shiftCalendarMonth(state.settingsCalYear, state.settingsCalMonth, 1)
+    : { year: state.settingsCalYear, month: state.settingsCalMonth + 1 };
+  const y = shifted.year;
+  const m = shifted.month;
+  return `${y}-${String(m).padStart(2, '0')}-01`;
+}
+
+function formatScheduleVersionOptionLabel(ver, nextVer = null) {
+  const rangeLabel = typeof formatScheduleVersionRangeLabel === 'function'
+    ? formatScheduleVersionRangeLabel(ver, nextVer)
+    : (typeof formatEffectiveFromLabel === 'function'
+      ? formatEffectiveFromLabel(ver.effectiveFrom)
+      : ver.effectiveFrom);
+  const note = (ver.note || '').trim();
+  return note ? `${rangeLabel}（${note}）` : rangeLabel;
+}
+
+function buildHistorySettingsHtml(clinicId, activeVersion) {
+  const settings = typeof getClinicCalendarSettings === 'function'
+    ? getClinicCalendarSettings(clinicId)
+    : { versions: [] };
+  const versionsAsc = typeof getSortedScheduleVersions === 'function'
+    ? getSortedScheduleVersions(settings)
+    : [...(settings.versions || [])].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  const versions = [...versionsAsc].reverse();
+  const canDelete = versions.length > 1;
+  const versionId = activeVersion?.id || '';
+
+  const options = versions.map((ver) => {
+    const ascIndex = versionsAsc.findIndex((v) => v.id === ver.id);
+    const nextVer = ascIndex >= 0 ? (versionsAsc[ascIndex + 1] || null) : null;
+    const label = formatScheduleVersionOptionLabel(ver, nextVer)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/"/g, '&quot;');
+    return `<option value="${ver.id}"${ver.id === versionId ? ' selected' : ''}>${label}</option>`;
+  }).join('');
+
+  return `
+    <div class="settings-basic-block">
+      <h3 class="settings-basic-label">適用開始</h3>
+      <div class="settings-history-bar">
+        <select class="settings-history-combo" data-action="select-schedule-version" aria-label="適用開始の履歴">
+          ${options}
+        </select>
+        <button type="button" class="settings-history-update-btn" data-action="update-schedule-version" data-version-id="${versionId}">更新</button>
+        ${canDelete ? `<button type="button" class="settings-history-delete" data-action="delete-schedule-version" data-version-id="${versionId}">削除</button>` : ''}
+      </div>
+    </div>`;
+}
+
+function buildAddVersionBarHtml() {
+  const form = getHolidayAddForm();
+  const fromValue = form.from || '';
+  const noteValue = (form.note || '').replace(/"/g, '&quot;');
+  return `
+    <div class="settings-add-version-bar">
+      <label class="settings-add-version-field">適用開始日
+        <input type="date" id="settings-new-version-from" data-action="settings-add-form" data-field="from" value="${fromValue}">
+      </label>
+      <label class="settings-add-version-field settings-add-version-field--note">メモ
+        <input type="text" id="settings-new-version-note" data-action="settings-add-form" data-field="note" value="${noteValue}" placeholder="例: 代替わり休診日見直しのため">
+      </label>
+      <button type="button" class="settings-history-add-btn" data-action="add-schedule-version">追加</button>
+    </div>`;
+}
+
+function buildBasicInfoSettingsHtml(clinicId) {
+  const activeVersion = ensureSettingsVersionSelection(clinicId);
+  const weekly = new Set(activeVersion?.weeklyClosed || [0]);
+  const schedule = activeVersion?.schedule || {};
+  const labels = typeof WEEKDAY_LABELS_JP !== 'undefined'
+    ? WEEKDAY_LABELS_JP
+    : ['日', '月', '火', '水', '木', '金', '土'];
+  const versionId = activeVersion?.id || '';
+
+  const weekdayBtns = labels.map((label, day) => {
+    const closed = weekly.has(day);
+    return `<button type="button"
+      class="settings-weekday-btn${closed ? ' settings-weekday-btn--closed' : ''}${day === 0 ? ' settings-weekday-btn--sun' : ''}"
+      data-action="toggle-weekly-closed"
+      data-weekday="${day}"
+      data-version-id="${versionId}"
+      aria-pressed="${closed ? 'true' : 'false'}">${label}</button>`;
+  }).join('');
+
+  const scheduleRows = labels.map((label, day) => {
+    const row = schedule[day] || {};
+    const closed = weekly.has(day);
+    if (closed) {
+      return `
+        <div class="settings-schedule-row settings-schedule-row--closed">
+          <span class="settings-schedule-day">${label}</span>
+          <span class="settings-schedule-closed-tag">定休日</span>
+        </div>`;
+    }
+    return `
+      <div class="settings-schedule-row" data-weekday="${day}">
+        <span class="settings-schedule-day">${label}</span>
+        <div class="settings-schedule-fields">
+          <label class="settings-time-field">
+            <span>診療</span>
+            <input type="time" data-action="update-schedule" data-weekday="${day}" data-field="openStart" data-version-id="${versionId}" value="${row.openStart || ''}">
+            <span class="settings-time-sep">〜</span>
+            <input type="time" data-action="update-schedule" data-weekday="${day}" data-field="openEnd" data-version-id="${versionId}" value="${row.openEnd || ''}">
+          </label>
+          <label class="settings-time-field">
+            <span>休憩</span>
+            <input type="time" data-action="update-schedule" data-weekday="${day}" data-field="breakStart" data-version-id="${versionId}" value="${row.breakStart || ''}">
+            <span class="settings-time-sep">〜</span>
+            <input type="time" data-action="update-schedule" data-weekday="${day}" data-field="breakEnd" data-version-id="${versionId}" value="${row.breakEnd || ''}">
+          </label>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="settings-section">
+      <h2 class="settings-section-heading">基本情報設定</h2>
+      <section class="settings-card settings-card--basic">
+        ${buildHistorySettingsHtml(clinicId, activeVersion)}
+
+        <div class="settings-basic-block">
+          <h3 class="settings-basic-label">定休日</h3>
+          <div class="settings-weekday-row" role="group" aria-label="定休日">${weekdayBtns}</div>
+        </div>
+
+        <div class="settings-basic-block">
+          <h3 class="settings-basic-label">曜日別の診療時間</h3>
+          <div class="settings-schedule-list">${scheduleRows}</div>
+        </div>
+
+        ${buildAddVersionBarHtml()}
+      </section>
+    </div>`;
+}
+
+function buildHolidaySettingsPageHtml() {
+  const clinicId = getHolidaySettingsClinicId();
+  const clinicName = getHolidaySettingsClinicName(clinicId);
+  if (!state.settingsCalYear) state.settingsCalYear = typeof CALENDAR_YEAR_DEFAULT !== 'undefined' ? CALENDAR_YEAR_DEFAULT : 2026;
+  if (!state.settingsCalMonth) state.settingsCalMonth = 6;
+  const year = state.settingsCalYear;
+  const month = state.settingsCalMonth;
+
+  const settings = typeof getClinicCalendarSettings === 'function'
+    ? getClinicCalendarSettings(clinicId)
+    : { specialClosed: [], specialOpen: [] };
+  const specialClosed = settings.specialClosed || [];
+  const specialOpen = settings.specialOpen || [];
+  const closedSet = new Set(specialClosed);
+  const openSet = new Set(specialOpen);
+
+  const cells = typeof buildMonthHolidayGrid === 'function'
+    ? buildMonthHolidayGrid(year, month, clinicId)
+    : [];
+
+  const weekdayHeads = (typeof WEEKDAY_LABELS_JP !== 'undefined' ? WEEKDAY_LABELS_JP : ['日', '月', '火', '水', '木', '金', '土'])
+    .map((w, i) => `<span class="holiday-cal-head${i === 0 ? ' holiday-cal-head--sun' : ''}">${w}</span>`)
+    .join('');
+
+  const dayCells = cells.map((cell) => {
+    if (!cell) return '<span class="holiday-cal-day holiday-cal-day--empty"></span>';
+    const specialClosedCls = closedSet.has(cell.key) ? ' holiday-cal-day--selected' : '';
+    const specialOpenCls = openSet.has(cell.key) ? ' holiday-cal-day--open' : '';
+    const weeklyCls = cell.isWeeklyClosed ? ' holiday-cal-day--weekly' : '';
+    const sunCls = cell.isSunday ? ' holiday-cal-day--sun' : '';
+    const pubCls = cell.isPublicHoliday ? ' holiday-cal-day--public' : '';
+    const title = [
+      cell.isPublicHoliday ? cell.holidayName : '',
+      closedSet.has(cell.key) ? '突発休診' : '',
+      openSet.has(cell.key) ? '臨時開院' : '',
+      cell.isWeeklyClosed ? '定休日' : '',
+      cell.isSunday ? '日曜' : '',
+    ].filter(Boolean).join(' / ') || `${month}/${cell.day}`;
+    return `<button type="button"
+      class="holiday-cal-day${specialClosedCls}${specialOpenCls}${weeklyCls}${sunCls}${pubCls}"
+      data-action="toggle-clinic-holiday"
+      data-date-key="${cell.key}"
+      title="${title}"
+      aria-pressed="${closedSet.has(cell.key) || openSet.has(cell.key) ? 'true' : 'false'}">${cell.day}</button>`;
+  }).join('');
+
+  const stats = typeof calcMonthlyOperatingStats === 'function'
+    ? calcMonthlyOperatingStats(clinicId, year, month)
+    : { operatingDays: 0, closedDays: 0, operatingHoursLabel: '0時間', daysInMonth: 0 };
+
+  return `
+    <div class="settings-page" id="settings-page" data-settings-page="holidays">
+      <header class="settings-page-header">
+        <p class="settings-page-eyebrow">設定</p>
+        <h1 class="settings-page-title">休日設定</h1>
+        <p class="settings-page-lead">${clinicName} の定休日・診療時間と、突発的な休診／臨時開院を設定します。日曜・祝日・定休日はグラフ上でも赤表示されます。</p>
+      </header>
+
+      ${buildBasicInfoSettingsHtml(clinicId)}
+
+      <div class="settings-section">
+        <div class="settings-section-heading-row">
+          <h2 class="settings-section-heading">臨時設定</h2>
+          <button type="button" class="settings-history-update-btn" data-action="update-special-days">更新</button>
+        </div>
+        <div class="settings-page-grid">
+        <section class="settings-card">
+          <header class="settings-card-header settings-card-header--cal">
+            <div class="settings-cal-nav">
+              <button type="button" class="settings-cal-nav-btn" data-action="cal-prev-month" aria-label="前の月">‹</button>
+              <h2 class="settings-card-title">${year}年${month}月</h2>
+              <button type="button" class="settings-cal-nav-btn" data-action="cal-next-month" aria-label="次の月">›</button>
+            </div>
+          </header>
+          <div class="holiday-cal-legend">
+            <span><i class="holiday-leg holiday-leg--sun"></i>日曜・定休</span>
+            <span><i class="holiday-leg holiday-leg--public"></i>祝日</span>
+            <span><i class="holiday-leg holiday-leg--clinic"></i>突発休診</span>
+            <span><i class="holiday-leg holiday-leg--open"></i>臨時開院</span>
+          </div>
+          <div class="holiday-cal holiday-cal--page">
+            <div class="holiday-cal-weekdays">${weekdayHeads}</div>
+            <div class="holiday-cal-grid">${dayCells}</div>
+          </div>
+        </section>
+
+        <section class="settings-card">
+          <header class="settings-card-header">
+            <h2 class="settings-card-title">当月の稼働</h2>
+            <p class="settings-card-sub">${year}年${month}月 · 全${stats.daysInMonth}日</p>
+          </header>
+          <div class="settings-ops-stats">
+            <div class="settings-ops-stat">
+              <span class="settings-ops-stat-label">稼働日数</span>
+              <span class="settings-ops-stat-value">${stats.operatingDays}<small>日</small></span>
+              <span class="settings-ops-stat-note">休診 ${stats.closedDays}日</span>
+            </div>
+            <div class="settings-ops-stat">
+              <span class="settings-ops-stat-label">稼働時間</span>
+              <span class="settings-ops-stat-value settings-ops-stat-value--hours">${stats.operatingHoursLabel}</span>
+              <span class="settings-ops-stat-note">診療時間 − 休憩</span>
+            </div>
+          </div>
+        </section>
+      </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindSettingsPageEvents(root) {
+  if (!root || root.dataset.settingsBound) return;
+  root.dataset.settingsBound = '1';
+  root.addEventListener('click', onHolidaySettingsClick);
+  root.addEventListener('change', onHolidaySettingsChange);
+  root.addEventListener('input', onHolidaySettingsChange);
+}
+
+function renderSettingsMain() {
+  const root = getAppMainRoot();
+  if (!root) return;
+
+  const toolbar = document.getElementById('period-toolbar');
+  if (toolbar) toolbar.hidden = true;
+
+  root.classList.add('is-settings-view');
+  if (root.id === 'main-content') root.className = 'content is-settings-view';
+  if (root.id === 'insight-main') {
+    delete root.dataset.shellInit;
+  }
+
+  root.innerHTML = buildHolidaySettingsPageHtml();
+  bindSettingsPageEvents(root);
+  document.title = '休日設定 | Dental Analytics';
+}
+
+function restoreAppMainView() {
+  const root = getAppMainRoot();
+  if (root) root.classList.remove('is-settings-view');
+
+  const toolbar = document.getElementById('period-toolbar');
+  if (toolbar) toolbar.hidden = false;
+
+  if (IS_INSIGHT_PAGE) {
+    const insightRoot = document.getElementById('insight-main');
+    if (insightRoot) delete insightRoot.dataset.shellInit;
+    if (typeof renderInsightPage === 'function') renderInsightPage();
+    return;
+  }
+  renderDashboard();
+  setupIntelPanelDragDrop();
+}
+
+function openHolidaySettings() {
+  if (typeof buildMonthHolidayGrid !== 'function') return;
+  state.settingsPage = 'holidays';
+  state.sidebarView = 'settings';
+  if (!state.settingsCalYear) {
+    state.settingsCalYear = typeof CALENDAR_YEAR_DEFAULT !== 'undefined' ? CALENDAR_YEAR_DEFAULT : 2026;
+  }
+  if (!state.settingsCalMonth) state.settingsCalMonth = 6;
+  clearHolidaySettingsDraft();
+  resetHolidayAddForm();
+  ensureHolidaySettingsDraft(getHolidaySettingsClinicId());
+  selectLatestSettingsVersion(getHolidaySettingsClinicId());
+  renderNav();
+  renderMeta();
+  renderSettingsMain();
+}
+
+async function closeHolidaySettingsPage() {
+  if (!state.settingsPage) return false;
+  const ok = await confirmLeaveHolidaySettings();
+  if (!ok) return false;
+  leaveHolidaySettingsView();
+  return true;
+}
+
+function openSidebarSettings() {
+  state.sidebarView = 'settings';
+  renderNav();
+  renderMeta();
+}
+
+async function closeSidebarSettings() {
+  const hadSettingsPage = !!state.settingsPage;
+  if (hadSettingsPage) {
+    const ok = await confirmLeaveHolidaySettings();
+    if (!ok) return false;
+  }
+  state.sidebarView = 'nav';
+  state.settingsPage = null;
+  clearHolidaySettingsDraft();
+  resetHolidayAddForm();
+  renderNav();
+  renderMeta();
+  if (hadSettingsPage) restoreAppMainView();
+  return true;
+}
+
+function onHolidaySettingsChange(e) {
+  const versionSelect = e.target.closest('[data-action="select-schedule-version"]');
+  if (versionSelect) {
+    syncHolidayAddFormFromDom();
+    state.settingsVersionId = versionSelect.value || null;
+    renderSettingsMain();
+    return;
+  }
+
+  const addFormInput = e.target.closest('[data-action="settings-add-form"]');
+  if (addFormInput) {
+    const form = getHolidayAddForm();
+    const field = addFormInput.dataset.field;
+    if (field === 'from') form.from = addFormInput.value || '';
+    if (field === 'note') form.note = addFormInput.value || '';
+    return;
+  }
+
+  const scheduleInput = e.target.closest('[data-action="update-schedule"]');
+  if (scheduleInput) {
+    const weekday = Number(scheduleInput.dataset.weekday);
+    const field = scheduleInput.dataset.field;
+    const versionId = scheduleInput.dataset.versionId || state.settingsVersionId;
+    if (!field || Number.isNaN(weekday)) return;
+    draftUpdateWeekdaySchedule(weekday, { [field]: scheduleInput.value }, versionId);
+  }
+}
+
+function onHolidaySettingsClick(e) {
+  const actionEl = e.target.closest('[data-action]');
+  if (!actionEl) return;
+  if (actionEl.matches('input[type="time"], input[type="date"], input[type="text"], select')) return;
+
+  const action = actionEl.dataset.action;
+  const clinicId = getHolidaySettingsClinicId();
+  ensureHolidaySettingsDraft(clinicId);
+
+  if (action === 'update-schedule-version') {
+    e.preventDefault();
+    const versionId = actionEl.dataset.versionId || state.settingsVersionId;
+    if (!versionId) return;
+    syncHolidayAddFormFromDom();
+    const form = getHolidayAddForm();
+    const patch = {};
+    if (form.from) patch.effectiveFrom = form.from;
+    if ((form.note || '').trim()) patch.note = form.note.trim();
+    if (Object.keys(patch).length) {
+      const result = draftApplyVersionMeta(versionId, patch);
+      if (!result?.ok) {
+        if (result?.reason === 'conflict') {
+          window.alert('同じ適用開始日が既にあります。別の日付に変更してください。');
+        } else if (result?.reason === 'invalid') {
+          window.alert('適用開始日の形式が不正です。');
+        } else {
+          window.alert('更新に失敗しました。');
+        }
+        return;
+      }
+    }
+    commitDraftVersions(clinicId);
+    state.settingsVersionId = versionId;
+    resetHolidayAddForm();
+    showSettingsToast('更新しました。');
+    renderSettingsMain();
+    return;
+  }
+
+  if (action === 'update-special-days') {
+    e.preventDefault();
+    commitDraftSpecialDays(clinicId);
+    showSettingsToast('更新しました。');
+    renderSettingsMain();
+    return;
+  }
+
+  if (action === 'add-schedule-version') {
+    e.preventDefault();
+    syncHolidayAddFormFromDom();
+    const form = getHolidayAddForm();
+    const from = form.from || '';
+    const note = (form.note || '').trim();
+    if (!from) {
+      window.alert('適用開始日を入力してください。');
+      return;
+    }
+    const newId = draftAddScheduleVersion(from, note, state.settingsVersionId);
+    if (!newId) {
+      window.alert('同じ適用開始日が既にあるか、日付形式が不正です。日付を変えてから再度追加してください。');
+      return;
+    }
+    commitDraftVersions(clinicId);
+    state.settingsVersionId = newId;
+    resetHolidayAddForm();
+    showSettingsToast('追加しました。');
+    renderSettingsMain();
+    return;
+  }
+
+  if (action === 'delete-schedule-version') {
+    e.preventDefault();
+    const versionId = actionEl.dataset.versionId || state.settingsVersionId;
+    if (!versionId) return;
+    if (!window.confirm('この適用期間を削除しますか？')) return;
+    const ok = draftDeleteScheduleVersion(versionId);
+    if (!ok) return;
+    commitDraftVersions(clinicId);
+    if (state.settingsVersionId === versionId) state.settingsVersionId = null;
+    ensureSettingsVersionSelection(clinicId);
+    showSettingsToast('更新しました。');
+    renderSettingsMain();
+    return;
+  }
+
+  if (action === 'toggle-weekly-closed') {
+    e.preventDefault();
+    syncHolidayAddFormFromDom();
+    const weekday = Number(actionEl.dataset.weekday);
+    const versionId = actionEl.dataset.versionId || state.settingsVersionId;
+    if (Number.isNaN(weekday)) return;
+    draftToggleWeeklyClosed(weekday, versionId);
+    renderSettingsMain();
+    return;
+  }
+
+  if (action === 'cal-prev-month' || action === 'cal-next-month') {
+    e.preventDefault();
+    syncHolidayAddFormFromDom();
+    const delta = action === 'cal-prev-month' ? -1 : 1;
+    const shifted = typeof shiftCalendarMonth === 'function'
+      ? shiftCalendarMonth(state.settingsCalYear, state.settingsCalMonth, delta)
+      : { year: state.settingsCalYear, month: state.settingsCalMonth + delta };
+    state.settingsCalYear = shifted.year;
+    state.settingsCalMonth = shifted.month;
+    renderSettingsMain();
+    return;
+  }
+
+  if (action === 'toggle-clinic-holiday') {
+    e.preventDefault();
+    syncHolidayAddFormFromDom();
+    const key = actionEl.dataset.dateKey;
+    const parsed = typeof parseDateKey === 'function' ? parseDateKey(key) : null;
+    if (!parsed) return;
+    draftCycleSpecialDay(parsed.year, parsed.month, parsed.day);
+    renderSettingsMain();
+  }
+}
+
 function initSidebarFooter() {
   const footer = document.getElementById('sidebar-footer');
   if (!footer || footer.dataset.init) return;
   footer.dataset.init = '1';
 
   footer.addEventListener('click', (e) => {
+    if (e.target.closest('[data-action="toggle-sidebar-settings"]') || e.target.closest('#sidebar-settings-btn')) {
+      e.preventDefault();
+      toggleSidebarSettings();
+      return;
+    }
     if (e.target.closest('.sidebar-upload-btn')) {
       footer.querySelector('.sidebar-file-input')?.click();
     }
@@ -1925,6 +2855,20 @@ function initSidebarFooter() {
     MOCK_DATA.meta.isRealData = true;
     renderMeta();
     input.value = '';
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (document.getElementById('settings-unsaved-dialog')) return;
+    if (state.settingsPage) {
+      closeHolidaySettingsPage().then((ok) => {
+        if (!ok) return;
+        renderNav();
+        renderMeta();
+      });
+      return;
+    }
+    if (state.sidebarView === 'settings') closeSidebarSettings();
   });
 }
 
@@ -1983,16 +2927,35 @@ function initSidebarResize() {
 function render() {
   applyPeriodHeaderMode();
   renderNav();
-  renderDashboard();
   renderMeta();
-  setupIntelPanelDragDrop();
   setupNavDragDrop();
+  if (state.settingsPage) {
+    renderSettingsMain();
+    return;
+  }
+  renderDashboard();
+  setupIntelPanelDragDrop();
 }
 
 const IS_INSIGHT_PAGE = !!document.getElementById('insight-main');
 
 function handleNavTreeClick(e) {
   if (e.target.closest('.nav-row__drag-handle')) return;
+
+  const settingsActionEl = e.target.closest('[data-action="close-sidebar-settings"], [data-action="open-holiday-settings"]');
+  if (settingsActionEl) {
+    e.preventDefault();
+    e.stopPropagation();
+    const action = settingsActionEl.dataset.action;
+    if (action === 'close-sidebar-settings') {
+      closeSidebarSettings();
+      return;
+    }
+    if (action === 'open-holiday-settings') {
+      openHolidaySettings();
+      return;
+    }
+  }
 
   const row = e.target.closest('.nav-row');
   const toggle = e.target.closest('[data-action="toggle"]');
@@ -2008,33 +2971,49 @@ function handleNavTreeClick(e) {
   if (!row) return;
   const action = row.dataset.action;
 
-  if (action === 'select-clinic') {
-    state.level = 'clinic';
-    state.clinicId = row.dataset.clinic;
-    state.role = null;
-    state.staffId = null;
-    if (!IS_INSIGHT_PAGE) state.selectedPeriod = '本日';
-    state.expanded[row.dataset.clinic] = true;
-  } else if (action === 'select-role') {
-    state.level = 'role';
-    state.clinicId = row.dataset.clinic;
-    state.role = row.dataset.role;
-    state.staffId = null;
-    if (!IS_INSIGHT_PAGE) state.selectedPeriod = '本日';
-  } else if (action === 'select-staff') {
-    state.level = 'staff';
-    state.clinicId = row.dataset.clinic;
-    state.role = row.dataset.role;
-    state.staffId = row.dataset.staff;
-    if (!IS_INSIGHT_PAGE) state.selectedPeriod = '本日';
-  }
+  const applyNavSelection = () => {
+    if (action === 'select-clinic') {
+      state.level = 'clinic';
+      state.clinicId = row.dataset.clinic;
+      state.role = null;
+      state.staffId = null;
+      if (!IS_INSIGHT_PAGE) state.selectedPeriod = '本日';
+      state.expanded[row.dataset.clinic] = true;
+    } else if (action === 'select-role') {
+      state.level = 'role';
+      state.clinicId = row.dataset.clinic;
+      state.role = row.dataset.role;
+      state.staffId = null;
+      if (!IS_INSIGHT_PAGE) state.selectedPeriod = '本日';
+    } else if (action === 'select-staff') {
+      state.level = 'staff';
+      state.clinicId = row.dataset.clinic;
+      state.role = row.dataset.role;
+      state.staffId = row.dataset.staff;
+      if (!IS_INSIGHT_PAGE) state.selectedPeriod = '本日';
+    }
 
-  if (IS_INSIGHT_PAGE) {
-    if (typeof window.onInsightNavChange === 'function') window.onInsightNavChange();
+    if (IS_INSIGHT_PAGE) {
+      if (typeof window.onInsightNavChange === 'function') window.onInsightNavChange();
+      return;
+    }
+
+    render();
+  };
+
+  if (state.settingsPage && (action === 'select-clinic' || action === 'select-role' || action === 'select-staff')) {
+    e.preventDefault();
+    confirmLeaveHolidaySettings().then((ok) => {
+      if (!ok) return;
+      leaveHolidaySettingsView();
+      applyNavSelection();
+      renderNav();
+      renderMeta();
+    });
     return;
   }
 
-  render();
+  applyNavSelection();
 }
 
 // --- Event Handling ---
@@ -2084,4 +3063,9 @@ if (mainContent) mainContent.addEventListener('keydown', (e) => {
 // Init
 initSidebarFooter();
 initSidebarResize();
+window.addEventListener('beforeunload', (e) => {
+  if (!isHolidaySettingsDirty()) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
 if (!IS_INSIGHT_PAGE) render();

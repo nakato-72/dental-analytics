@@ -19,6 +19,8 @@ const MOCK_DATA = {
       name: 'さくら歯科クリニック',
       attainment: 68,
       revenueWeight: 1,
+      // 医院休日（初期はなし）。サイドバー「休日設定」で追加でき、localStorage に保存される
+      closedDates: [],
       roles: {
         Dr: [
           { id: 'dr-tanaka', name: '田中 健一', attainment: 85, salesShare: 0.37 },

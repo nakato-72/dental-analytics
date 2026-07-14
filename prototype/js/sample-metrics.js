@@ -190,9 +190,29 @@ function buildStaffSalesWindowFromDetail(detail, weight = 1, entityKey = 'clinic
   return { labels: rev.labels, ...split };
 }
 
-const MONTHLY_CLOSED_DAYS = new Set([1, 8, 15, 29]);
+const MONTHLY_CLOSED_DAYS_FALLBACK = new Set([1, 8, 15, 29]);
 const MONTH_DAYS_IN_MONTH = 30;
 const MONTH_DAY_LABEL_PREFIX = '6/';
+const METRICS_CALENDAR_YEAR = typeof CALENDAR_YEAR_DEFAULT !== 'undefined' ? CALENDAR_YEAR_DEFAULT : 2026;
+const METRICS_CALENDAR_MONTH = 6;
+
+function resolveMonthlyClosedDays(clinicId = 'clinic-sakura', year = METRICS_CALENDAR_YEAR, month = METRICS_CALENDAR_MONTH) {
+  if (typeof getClosedDaySetForMonth === 'function') {
+    return getClosedDaySetForMonth(clinicId, year, month);
+  }
+  return new Set(MONTHLY_CLOSED_DAYS_FALLBACK);
+}
+
+/** 稼働率など向け: 休日設定から月次稼働日・時間を取得 */
+function getMonthlyOperatingCapacity(clinicId = 'clinic-sakura', year = METRICS_CALENDAR_YEAR, month = METRICS_CALENDAR_MONTH, options = {}) {
+  if (typeof getOperatingCapacitySnapshot === 'function') {
+    return getOperatingCapacitySnapshot(clinicId, year, month, options);
+  }
+  if (typeof calcMonthlyOperatingStats === 'function') {
+    return calcMonthlyOperatingStats(clinicId, year, month);
+  }
+  return null;
+}
 
 function parseAnchorDayFromSubtitle(subtitle) {
   const m = String(subtitle || '').match(/(\d{1,2})月(\d{1,2})日/);
@@ -202,6 +222,10 @@ function parseAnchorDayFromSubtitle(subtitle) {
 
 const FACT_AGGREGATE_PERIODS = new Set(['本日', '前日', '今月']);
 let sakuraDailyFactsCache = null;
+
+function invalidateClinicDailyFactsCache() {
+  sakuraDailyFactsCache = null;
+}
 
 function allocateDayScalars(monthTotal, fixedMap, throughDay, closedDays, weightFn) {
   const fixedDays = new Set(fixedMap.keys());
@@ -318,7 +342,7 @@ function materializeClinicDailyFacts(clinicId = 'clinic-sakura') {
   const yesterday = MOCK_DATA.periodDetails['前日'];
   if (!month || !today || !yesterday) return [];
 
-  const closedDays = MONTHLY_CLOSED_DAYS;
+  const closedDays = resolveMonthlyClosedDays(clinicId, METRICS_CALENDAR_YEAR, METRICS_CALENDAR_MONTH);
   const throughDay = parseAnchorDayFromSubtitle(today.subtitle);
   const yesterdayDay = parseAnchorDayFromSubtitle(yesterday.subtitle);
 
@@ -647,7 +671,7 @@ function resolveDailyFactsForChart(options = {}, entityKey = 'clinic-sakura', we
 
 function buildDailyRevenueSeriesFromFacts(facts, options = {}, weight = 1) {
   const daysInMonth = options.daysInMonth || MONTH_DAYS_IN_MONTH;
-  const closedDays = options.closedDays || MONTHLY_CLOSED_DAYS;
+  const closedDays = options.closedDays || resolveMonthlyClosedDays();
   const monthPrefix = options.monthPrefix || MONTH_DAY_LABEL_PREFIX;
   const throughDay = options.throughDay ?? parseAnchorDayFromSubtitle(
     (options.todayDetail || MOCK_DATA?.periodDetails?.['本日'])?.subtitle,
@@ -677,7 +701,7 @@ function buildDailyRevenueSeriesFromFacts(facts, options = {}, weight = 1) {
 
 function buildDailyVisitSeriesFromFacts(facts, options = {}, weight = 1) {
   const daysInMonth = options.daysInMonth || MONTH_DAYS_IN_MONTH;
-  const closedDays = options.closedDays || MONTHLY_CLOSED_DAYS;
+  const closedDays = options.closedDays || resolveMonthlyClosedDays();
   const monthPrefix = options.monthPrefix || MONTH_DAY_LABEL_PREFIX;
   const throughDay = options.throughDay ?? parseAnchorDayFromSubtitle(
     (options.todayDetail || MOCK_DATA?.periodDetails?.['本日'])?.subtitle,
@@ -1016,7 +1040,21 @@ function scaleQuestionnaireBlock(block, weight) {
 
 function getUtilization(detail) {
   const util = scaleUtilizationBlock(detail?.utilization, 1);
-  return { ...util, ratePct: getUtilizationRatePct(util) };
+  const capacity = getMonthlyOperatingCapacity();
+  return {
+    ...util,
+    ratePct: getUtilizationRatePct(util),
+    // 休日設定由来。枠数 slots は当面モック。稼働率タブで開院日・時間を参照可能
+    operating: capacity
+      ? {
+        operatingDays: capacity.operatingDays,
+        closedDays: capacity.closedDays,
+        operatingMinutes: capacity.operatingMinutes,
+        operatingHoursLabel: capacity.operatingHoursLabel,
+        suggestedSlots: capacity.suggestedSlots ?? null,
+      }
+      : null,
+  };
 }
 
 function getRecall(detail) {
