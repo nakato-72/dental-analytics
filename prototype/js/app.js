@@ -14,12 +14,13 @@ const state = {
   intelPanelOrder: null,
   navOrder: null,
   sidebarView: 'nav', // 'nav' | 'settings'
-  settingsPage: null, // null | 'holidays'
+  settingsPage: null, // null | 'holidays' | 'goals'
   settingsCalYear: 2026,
   settingsCalMonth: 6,
   settingsVersionId: null,
   settingsDraft: null, // 休日設定画面の未保存下書き
   settingsAddForm: { from: '', note: '' },
+  settingsGoalsDraft: null, // 目標設定の入力中下書き
 };
 
 const INTEL_PANEL_ORDER_STORAGE_KEY = 'intelPanelOrder';
@@ -781,6 +782,13 @@ function isActive(level, id, role) {
 function renderSettingsNav() {
   const items = [
     {
+      id: 'goals',
+      label: '目標設定',
+      desc: '月間の売上・患者・予約・定着',
+      action: 'open-goals-settings',
+      icon: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>`,
+    },
+    {
       id: 'holidays',
       label: '休日設定',
       desc: '医院の休診日を登録',
@@ -1156,13 +1164,14 @@ function renderStackedRevenueChart(chart, options = {}) {
     chart.highlightIndex,
     (i) => {
       const total = barTotal(chart, i);
+      if (total <= 0) return '<div class="detail-bar-empty" aria-hidden="true"></div>';
       const barH = (total / scale.axisMax) * 100;
       return `
         <div class="detail-stacked-bar" style="height:${barH}%">
           ${segments.map(seg => {
             const val = chart[seg.key][i] || 0;
             if (val <= 0) return '';
-            const h = total > 0 ? (val / total) * 100 : 0;
+            const h = (val / total) * 100;
             return `<div class="detail-stack-seg" style="height:${h}%;background:${seg.color}" title="${seg.key === 'insurance' ? '保険' : seg.key === 'selfPay' ? '自費' : seg.key === 'products' ? '販売品' : 'その他'} ${formatYen(val)}"></div>`;
           }).join('')}
         </div>
@@ -1199,6 +1208,7 @@ function renderVisitsChart(chart) {
     chart.highlightIndex,
     (i) => {
       const total = visitTotal(chart, i);
+      if (total <= 0) return '<div class="detail-bar-empty" aria-hidden="true"></div>';
       const barH = (total / scale.axisMax) * 100;
       return `
         <div class="detail-stacked-bar detail-stacked-bar--visits" style="height:${barH}%">
@@ -1206,7 +1216,7 @@ function renderVisitsChart(chart) {
           ${segments.map(seg => {
             const val = chart[seg.key]?.[i] || 0;
             if (val <= 0) return '';
-            const h = total > 0 ? (val / total) * 100 : 0;
+            const h = (val / total) * 100;
             return `<div class="detail-stack-seg" style="height:${h}%;background:${seg.color}" title="${seg.label} ${val}人"></div>`;
           }).join('')}
         </div>
@@ -1427,44 +1437,13 @@ function renderIntelAppointmentBreakdown(p) {
   const b = typeof normalizeAppointmentBreakdown === 'function'
     ? normalizeAppointmentBreakdown(raw)
     : raw;
-  const total = p.appointmentTotal
-    || (b.visited + b.notVisited + b.cancelled);
-  const pct = (v) => (total > 0 ? Math.round((v / total) * 1000) / 10 : 0);
-  const cancelTotal = b.cancelled;
-  const chartHtml = renderIntelMiniBars([
-    { value: b.visited, color: '#10b981' },
-    { value: b.notVisited, color: '#0ea5e9' },
-    { value: cancelTotal, color: '#f59e0b' },
-  ]);
-  const rows = [
-    {
-      label: '来院済',
-      text: `${b.visited}件`,
-      valueHtml: `${b.visited.toLocaleString('ja-JP')}<span class="unit">件</span>`,
-    },
-    {
-      label: '未来院',
-      text: `${b.notVisited}件`,
-      valueHtml: `${b.notVisited.toLocaleString('ja-JP')}<span class="unit">件</span>`,
-    },
-    {
-      label: 'キャンセル',
-      text: `${cancelTotal}件`,
-      valueHtml: `
-        <div class="intel-appt-cancel-block">
-          <div class="intel-appt-cancel-summary">
-            <span class="intel-appt-cancel-count">${cancelTotal.toLocaleString('ja-JP')}</span>
-            <span class="intel-appt-cancel-rate">率 ${pct(cancelTotal)}%</span>
-          </div>
-          <div class="intel-appt-cancel-breakdown">
-            <span class="intel-appt-cancel-item" style="--item-color:#eab308">当日 <strong>${b.cancelSameDay}</strong> <span>率 ${pct(b.cancelSameDay)}%</span></span>
-            <span class="intel-appt-cancel-item" style="--item-color:#f59e0b">前日以降 <strong>${b.cancelAdvance}</strong> <span>率 ${pct(b.cancelAdvance)}%</span></span>
-            <span class="intel-appt-cancel-item" style="--item-color:#ef4444">無断 <strong>${b.noShow}</strong> <span>率 ${pct(b.noShow)}%</span></span>
-          </div>
-        </div>`,
-    },
-  ];
-  return renderIntelBreakdownRows(chartHtml, rows);
+  return renderIntelCountBreakdown([
+    { label: '来院済', count: b.visited },
+    { label: '未来院', count: b.notVisited },
+    { label: '当日キャンセル', count: b.cancelSameDay || 0 },
+    { label: '前日以降キャンセル', count: b.cancelAdvance || 0 },
+    { label: '無断キャンセル', count: b.noShow || 0 },
+  ], '件', ['#10b981', '#0ea5e9', '#eab308', '#f59e0b', '#ef4444']);
 }
 
 function renderIntelPanelSlot(p, grid, index) {
@@ -1502,17 +1481,57 @@ function renderIntelRevenueBreakdown(p) {
 }
 
 function renderIntelMetricMain(p) {
+  const segments = Array.isArray(p.progressSegments) && p.progressSegments.length
+    ? p.progressSegments.filter((s) => (s.value || 0) > 0)
+    : null;
   const progress = p.progress ?? 0;
-  const chartHtml = p.progress != null
-    ? renderIntelMiniDonut([
+  const chartHtml = segments
+    ? renderIntelMiniDonut(segments.map((s) => ({
+      value: s.value,
+      color: s.color || p.accent || '#0ea5e9',
+    })))
+    : (p.progress != null
+      ? renderIntelMiniDonut([
         { value: progress, color: p.accent || '#0ea5e9' },
         { value: Math.max(0, 100 - progress), color: '#e8edf2' },
       ])
-    : '<div class="intel-mini-donut intel-mini-donut--empty" aria-hidden="true"></div>';
+      : '<div class="intel-mini-donut intel-mini-donut--empty" aria-hidden="true"></div>');
+
+  if (segments) {
+    const isYen = p.id === 'selfPay' || p.label === '自費';
+    const unit = isYen ? '' : (p.id === 'utilization' || p.label === '稼働率' ? '枠' : '件');
+    const rows = segments.map((s) => {
+      const valueHtml = isYen
+        ? intelFormatYen(s.value)
+        : `${Number(s.value).toLocaleString('ja-JP')}<span class="unit">${unit}</span>`;
+      return {
+        label: s.label,
+        text: isYen ? intelFormatYen(s.value) : `${s.value}${unit}`,
+        valueHtml,
+      };
+    });
+    return renderIntelBreakdownRows(chartHtml, rows);
+  }
+
   if (!p.sub) {
     return renderIntelBreakdownWithChart(chartHtml, []);
   }
   return renderIntelBreakdownWithChart(chartHtml, [{ text: p.sub, metaOnly: true }]);
+}
+
+function renderIntelProgressBar(p) {
+  if (Array.isArray(p.progressSegments) && p.progressSegments.length) {
+    const segments = p.progressSegments.filter((s) => (s.value || 0) > 0);
+    const total = segments.reduce((sum, s) => sum + (s.value || 0), 0);
+    if (!total) return '';
+    const segsHtml = segments.map((s) => {
+      const pct = ((s.value || 0) / total) * 100;
+      return `<span class="progress-seg" style="width:${pct}%;background:${s.color || p.accent || '#0ea5e9'}" title="${s.label || ''} ${s.value}"></span>`;
+    }).join('');
+    return `<div class="progress-bar intel-panel-progress intel-panel-progress--segments" role="img" aria-label="構成比">${segsHtml}</div>`;
+  }
+  if (p.progress == null) return '';
+  return `<div class="progress-bar intel-panel-progress"><div class="progress-fill ${progressClass(p.progress)}" style="width:${Math.min(p.progress, 100)}%"></div></div>`;
 }
 
 function renderIntelPanelHeaderValue(p) {
@@ -1577,7 +1596,8 @@ function renderIntelPanel(p) {
   const clickAttrs = `class="${panelClasses.join(' ')}" data-action="open-insight" data-insight-page="${p.id}" data-panel-id="${p.id}" role="button" tabindex="0" style="--intel-accent:${p.accent}"`;
 
   const showFootSub = (p.type === 'salesBreakdown' && p.sub)
-    || ((p.type === 'visitBreakdown' || p.type === 'appointmentBreakdown') && p.sub);
+    || ((p.type === 'visitBreakdown' || p.type === 'appointmentBreakdown') && p.sub)
+    || (!breakdownTypes.includes(p.type) && p.cancelCount == null && p.sub);
   const footSub = showFootSub ? `<span class="intel-panel-sub">${p.sub || ''}</span>` : '';
 
   return `
@@ -1592,7 +1612,7 @@ function renderIntelPanel(p) {
           ${footSub}
           ${renderIntelTrend(p)}
         </div>
-        ${p.progress != null ? `<div class="progress-bar intel-panel-progress"><div class="progress-fill ${progressClass(p.progress)}" style="width:${Math.min(p.progress, 100)}%"></div></div>` : ''}
+        ${renderIntelProgressBar(p)}
       </div>
     </div>`;
 }
@@ -1976,7 +1996,7 @@ function renderMeta() {
 
 async function toggleSidebarSettings() {
   if (state.sidebarView === 'settings') await closeSidebarSettings();
-  else openSidebarSettings();
+  else await openSidebarSettings();
 }
 
 function getHolidaySettingsClinicId() {
@@ -2068,6 +2088,7 @@ function normalizeSettingsComparePayload(settings) {
       .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom)),
     specialClosed: [...(settings?.specialClosed || [])].sort(),
     specialOpen: [...(settings?.specialOpen || [])].sort(),
+    specialOpenHours: settings?.specialOpenHours || {},
   };
 }
 
@@ -2166,6 +2187,7 @@ function leaveHolidaySettingsView() {
   state.settingsPage = null;
   clearHolidaySettingsDraft();
   resetHolidayAddForm();
+  clearGoalsSettingsDraft();
   restoreAppMainView();
 }
 
@@ -2215,7 +2237,7 @@ function draftUpdateWeekdaySchedule(weekday, patch, versionId) {
   }
 }
 
-function draftCycleSpecialDay(year, month, day) {
+function draftCycleSpecialDay(year, month, day, hours = null) {
   const draft = ensureHolidaySettingsDraft();
   const key = typeof toDateKey === 'function'
     ? toDateKey(year, month, day)
@@ -2227,14 +2249,101 @@ function draftCycleSpecialDay(year, month, day) {
   const weeklyClosed = (snap?.weeklyClosed || []).includes(weekday);
   const closedSet = new Set(draft.specialClosed || []);
   const openSet = new Set(draft.specialOpen || []);
+  if (!draft.specialOpenHours) draft.specialOpenHours = {};
 
-  if (closedSet.has(key)) closedSet.delete(key);
-  else if (openSet.has(key)) openSet.delete(key);
-  else if (weeklyClosed) openSet.add(key);
-  else closedSet.add(key);
+  if (closedSet.has(key)) {
+    closedSet.delete(key);
+  } else if (openSet.has(key)) {
+    openSet.delete(key);
+    delete draft.specialOpenHours[key];
+  } else if (weeklyClosed) {
+    if (!hours) return { ok: false, needsHours: true, key, snap };
+    openSet.add(key);
+    draft.specialOpenHours[key] = typeof normalizeSpecialOpenHoursRow === 'function'
+      ? normalizeSpecialOpenHoursRow(hours)
+      : { ...hours, closed: false };
+  } else {
+    closedSet.add(key);
+  }
 
   draft.specialClosed = [...closedSet].sort();
   draft.specialOpen = [...openSet].sort();
+  if (typeof normalizeSpecialOpenHoursMap === 'function') {
+    draft.specialOpenHours = normalizeSpecialOpenHoursMap(draft.specialOpenHours, draft.specialOpen);
+  }
+  return { ok: true };
+}
+
+function showSpecialOpenHoursDialog({ dateLabel, defaults }) {
+  return new Promise((resolve) => {
+    const existing = document.getElementById('settings-special-open-dialog');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'settings-special-open-dialog';
+    overlay.className = 'settings-unsaved-dialog';
+    overlay.innerHTML = `
+      <div class="settings-unsaved-dialog__panel settings-special-open-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="settings-special-open-title">
+        <h3 id="settings-special-open-title" class="settings-unsaved-dialog__title">臨時開院の時間</h3>
+        <p class="settings-unsaved-dialog__body">${dateLabel} の診療時間・休憩時間を指定してください。</p>
+        <div class="settings-special-open-fields">
+          <label class="settings-special-open-field">診療
+            <span class="settings-special-open-times">
+              <input type="time" data-field="openStart" value="${defaults.openStart || '09:00'}">
+              <span>〜</span>
+              <input type="time" data-field="openEnd" value="${defaults.openEnd || '18:30'}">
+            </span>
+          </label>
+          <label class="settings-special-open-field">休憩
+            <span class="settings-special-open-times">
+              <input type="time" data-field="breakStart" value="${defaults.breakStart || '13:00'}">
+              <span>〜</span>
+              <input type="time" data-field="breakEnd" value="${defaults.breakEnd || '14:30'}">
+            </span>
+          </label>
+        </div>
+        <div class="settings-unsaved-dialog__actions">
+          <button type="button" class="settings-unsaved-dialog__btn settings-unsaved-dialog__btn--primary" data-choice="ok">OK</button>
+          <button type="button" class="settings-unsaved-dialog__btn" data-choice="cancel">キャンセル</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const finish = (value) => {
+      document.removeEventListener('keydown', onKey, true);
+      overlay.remove();
+      resolve(value);
+    };
+
+    const readHours = () => ({
+      openStart: overlay.querySelector('[data-field="openStart"]')?.value || '',
+      openEnd: overlay.querySelector('[data-field="openEnd"]')?.value || '',
+      breakStart: overlay.querySelector('[data-field="breakStart"]')?.value || '',
+      breakEnd: overlay.querySelector('[data-field="breakEnd"]')?.value || '',
+    });
+
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        finish(null);
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay || e.target.closest('[data-choice="cancel"]')) {
+        finish(null);
+        return;
+      }
+      const okBtn = e.target.closest('[data-choice="ok"]');
+      if (!okBtn) return;
+      const hours = readHours();
+      if (!hours.openStart || !hours.openEnd) {
+        window.alert('診療時間を入力してください。');
+        return;
+      }
+      finish(hours);
+    });
+  });
 }
 
 function draftApplyVersionMeta(versionId, { effectiveFrom, note } = {}) {
@@ -2308,10 +2417,12 @@ function commitDraftSpecialDays(clinicId = getHolidaySettingsClinicId()) {
     ...persisted,
     specialClosed: [...(draft.specialClosed || [])],
     specialOpen: [...(draft.specialOpen || [])],
+    specialOpenHours: cloneHolidaySettings(draft.specialOpenHours || {}),
   });
   const saved = getClinicCalendarSettings(clinicId, { persisted: true });
   draft.specialClosed = [...(saved.specialClosed || [])];
   draft.specialOpen = [...(saved.specialOpen || [])];
+  draft.specialOpenHours = cloneHolidaySettings(saved.specialOpenHours || {});
 }
 
 function selectLatestSettingsVersion(clinicId) {
@@ -2484,7 +2595,6 @@ function buildBasicInfoSettingsHtml(clinicId) {
 
 function buildHolidaySettingsPageHtml() {
   const clinicId = getHolidaySettingsClinicId();
-  const clinicName = getHolidaySettingsClinicName(clinicId);
   if (!state.settingsCalYear) state.settingsCalYear = typeof CALENDAR_YEAR_DEFAULT !== 'undefined' ? CALENDAR_YEAR_DEFAULT : 2026;
   if (!state.settingsCalMonth) state.settingsCalMonth = 6;
   const year = state.settingsCalYear;
@@ -2492,7 +2602,7 @@ function buildHolidaySettingsPageHtml() {
 
   const settings = typeof getClinicCalendarSettings === 'function'
     ? getClinicCalendarSettings(clinicId)
-    : { specialClosed: [], specialOpen: [] };
+    : { specialClosed: [], specialOpen: [], specialOpenHours: {} };
   const specialClosed = settings.specialClosed || [];
   const specialOpen = settings.specialOpen || [];
   const closedSet = new Set(specialClosed);
@@ -2513,10 +2623,14 @@ function buildHolidaySettingsPageHtml() {
     const weeklyCls = cell.isWeeklyClosed ? ' holiday-cal-day--weekly' : '';
     const sunCls = cell.isSunday ? ' holiday-cal-day--sun' : '';
     const pubCls = cell.isPublicHoliday ? ' holiday-cal-day--public' : '';
+    const openHours = settings.specialOpenHours?.[cell.key];
+    const openHoursLabel = openHours
+      ? `臨時開院 ${openHours.openStart}〜${openHours.openEnd}`
+      : '';
     const title = [
       cell.isPublicHoliday ? cell.holidayName : '',
       closedSet.has(cell.key) ? '突発休診' : '',
-      openSet.has(cell.key) ? '臨時開院' : '',
+      openSet.has(cell.key) ? (openHoursLabel || '臨時開院') : '',
       cell.isWeeklyClosed ? '定休日' : '',
       cell.isSunday ? '日曜' : '',
     ].filter(Boolean).join(' / ') || `${month}/${cell.day}`;
@@ -2537,16 +2651,12 @@ function buildHolidaySettingsPageHtml() {
       <header class="settings-page-header">
         <p class="settings-page-eyebrow">設定</p>
         <h1 class="settings-page-title">休日設定</h1>
-        <p class="settings-page-lead">${clinicName} の定休日・診療時間と、突発的な休診／臨時開院を設定します。日曜・祝日・定休日はグラフ上でも赤表示されます。</p>
       </header>
 
       ${buildBasicInfoSettingsHtml(clinicId)}
 
       <div class="settings-section">
-        <div class="settings-section-heading-row">
-          <h2 class="settings-section-heading">臨時設定</h2>
-          <button type="button" class="settings-history-update-btn" data-action="update-special-days">更新</button>
-        </div>
+        <h2 class="settings-section-heading">臨時設定</h2>
         <div class="settings-page-grid">
         <section class="settings-card">
           <header class="settings-card-header settings-card-header--cal">
@@ -2565,6 +2675,9 @@ function buildHolidaySettingsPageHtml() {
           <div class="holiday-cal holiday-cal--page">
             <div class="holiday-cal-weekdays">${weekdayHeads}</div>
             <div class="holiday-cal-grid">${dayCells}</div>
+          </div>
+          <div class="settings-cal-footer">
+            <button type="button" class="settings-history-update-btn" data-action="update-special-days">更新</button>
           </div>
         </section>
 
@@ -2613,6 +2726,15 @@ function renderSettingsMain() {
     delete root.dataset.shellInit;
   }
 
+  delete root.dataset.settingsBound;
+
+  if (state.settingsPage === 'goals') {
+    root.innerHTML = buildGoalsSettingsPageHtml();
+    bindGoalsSettingsPageEvents(root);
+    document.title = '目標設定 | Dental Analytics';
+    return;
+  }
+
   root.innerHTML = buildHolidaySettingsPageHtml();
   bindSettingsPageEvents(root);
   document.title = '休日設定 | Dental Analytics';
@@ -2635,8 +2757,563 @@ function restoreAppMainView() {
   setupIntelPanelDragDrop();
 }
 
-function openHolidaySettings() {
+function getGoalsSettingsClinicId() {
+  return state.clinicId || 'clinic-sakura';
+}
+
+function ensureGoalsSettingsDraft() {
+  const clinicId = getGoalsSettingsClinicId();
+  if (state.settingsGoalsDraft && state.settingsGoalsDraft._clinicId === clinicId) {
+    return state.settingsGoalsDraft;
+  }
+  const base = typeof getClinicGoals === 'function'
+    ? getClinicGoals(clinicId)
+    : (typeof normalizeClinicGoals === 'function'
+      ? normalizeClinicGoals({})
+      : { monthlyRevenue: 6300000, monthlyPatients: 1000 });
+  state.settingsGoalsDraft = { _clinicId: clinicId, ...base };
+  return state.settingsGoalsDraft;
+}
+
+function clearGoalsSettingsDraft() {
+  state.settingsGoalsDraft = null;
+}
+
+function formatGoalsYenInput(value) {
+  const n = Math.max(0, Math.round(Number(value) || 0));
+  return n.toLocaleString('ja-JP');
+}
+
+function parseGoalsYenInput(raw) {
+  const n = Number(String(raw || '').replace(/[¥￥,\s]/g, ''));
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+}
+
+function formatGoalsCount(value, { decimals = 0 } = {}) {
+  const n = Number(value) || 0;
+  const safe = Math.max(0, decimals > 0 ? n : Math.round(n));
+  return String(safe.toLocaleString('ja-JP', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+  }));
+}
+
+/** number input 向け：カンマなし（type=number が拒否するのを防ぐ） */
+function formatGoalsCountRaw(value, { decimals = 0 } = {}) {
+  const n = Number(value) || 0;
+  const safe = Math.max(0, decimals > 0 ? n : Math.round(n));
+  if (decimals > 0) {
+    const fixed = safe.toFixed(decimals).replace(/\.?0+$/, '');
+    return fixed === '' ? '0' : fixed;
+  }
+  return String(Math.round(safe));
+}
+
+function parseGoalsCountInput(raw) {
+  const n = Number(String(raw || '').replace(/[,\s人点件％%]/g, ''));
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+}
+
+function formatGoalsPct(value) {
+  const n = Math.max(0, Number(value) || 0);
+  return n.toLocaleString('ja-JP', {
+    minimumFractionDigits: Number.isInteger(n) ? 0 : 1,
+    maximumFractionDigits: 1,
+  });
+}
+
+function parseGoalsPctInput(raw) {
+  const n = Number(String(raw || '').replace(/[%,\s]/g, ''));
+  return Number.isFinite(n) ? Math.max(0, Math.round(n * 10) / 10) : 0;
+}
+
+function recomputeGoalsDraft(draft) {
+  if (!draft) return draft;
+  const computed = typeof deriveClinicGoalTotals === 'function'
+    ? deriveClinicGoalTotals(draft)
+    : draft;
+  Object.assign(draft, computed);
+  return draft;
+}
+
+function resolveGoalsOperatingDays(clinicId) {
+  const year = state.settingsCalYear
+    || (typeof CALENDAR_YEAR_DEFAULT !== 'undefined' ? CALENDAR_YEAR_DEFAULT : 2026);
+  const month = state.settingsCalMonth || 6;
+  if (typeof calcMonthlyOperatingStats === 'function') {
+    const stats = calcMonthlyOperatingStats(clinicId, year, month);
+    if (stats?.operatingDays > 0) {
+      return {
+        operatingDays: stats.operatingDays,
+        year,
+        month,
+        note: `${year}年${month}月・診療 ${stats.operatingDays}日`,
+      };
+    }
+  }
+  return {
+    operatingDays: 22,
+    year,
+    month,
+    note: `診療日数 22日（目安）`,
+  };
+}
+
+function computeGoalsLanding(draft, clinicId = getGoalsSettingsClinicId()) {
+  const d = recomputeGoalsDraft({ ...(draft || {}) });
+  const { operatingDays, note } = resolveGoalsOperatingDays(clinicId);
+  const days = operatingDays > 0 ? operatingDays : 1;
+
+  /**
+   * 患者の着地計算
+   * 1日患者数   = 延べ患者数 ÷ 診療日数
+   * 新患数/日   = 新患数 ÷ 診療日数
+   * 1人平均来院 = 延べ患者数 ÷ 目標患者数（実人数）
+   */
+  const dailyVisits = Math.round((d.monthlyVisitCount / days) * 10) / 10;
+  const dailyNewPatients = Math.round((d.monthlyNewPatients / days) * 10) / 10;
+  const avgVisitsPerPatient = d.monthlyPatients > 0
+    ? Math.round((d.monthlyVisitCount / d.monthlyPatients) * 10) / 10
+    : 0;
+
+  /** 1日のキャンセル率 = キャンセル数 ÷ 1日患者数 × 100 */
+  const dailyCancelRatePct = dailyVisits > 0
+    ? Math.round((d.monthlyCancelCount / dailyVisits) * 1000) / 10
+    : 0;
+
+  return {
+    ...d,
+    operatingDays,
+    operatingNote: note,
+    dailyVisits,
+    dailyNewPatients,
+    avgVisitsPerPatient,
+    dailyCancelRatePct,
+  };
+}
+
+function computeGoalsBreakdown(draft) {
+  return computeGoalsLanding(draft);
+}
+
+function goalsFieldHtml({
+  field,
+  label,
+  value,
+  kind = 'number',
+  suffix = '',
+  prefix = '',
+  badge = '',
+  readonly = false,
+  decimals = 0,
+}) {
+  const badgeHtml = badge
+    ? `<span class="goals-field__badge">${badge}</span>`
+    : '';
+  let displayValue = value;
+  if (kind === 'yen') displayValue = formatGoalsYenInput(value);
+  else if (kind === 'pct') displayValue = formatGoalsPct(value);
+  else displayValue = formatGoalsCountRaw(value, { decimals });
+
+  const inputAttrs = readonly
+    ? 'readonly tabindex="-1"'
+    : `data-action="goals-input" data-field="${field}" data-kind="${kind}"`;
+
+  const controlClass = [
+    'goals-field__control',
+    readonly ? 'goals-field__control--readonly' : '',
+    kind === 'yen' ? 'goals-field__control--yen' : '',
+  ].filter(Boolean).join(' ');
+
+  return `
+    <label class="goals-field${readonly ? ' goals-field--derived' : ''}">
+      <span class="goals-field__label-row">
+        <span class="goals-field__label">${label}</span>
+        ${badgeHtml}
+        ${readonly ? '<span class="goals-field__badge goals-field__badge--derived">自動</span>' : ''}
+      </span>
+      <span class="${controlClass}">
+        ${prefix ? `<span class="goals-field__prefix">${prefix}</span>` : ''}
+        <input type="text"
+          inputmode="${kind === 'pct' || decimals > 0 ? 'decimal' : 'numeric'}"
+          data-goal-field="${field}"
+          value="${displayValue}"
+          aria-label="${label}"
+          ${inputAttrs}>
+        ${suffix ? `<span class="goals-field__suffix">${suffix}</span>` : ''}
+      </span>
+    </label>
+  `;
+}
+
+function goalsLandingStat(label, valueHtml, previewKey) {
+  return `
+    <div class="goals-landing__stat">
+      <span class="goals-landing__stat-label">${label}</span>
+      <strong class="goals-landing__stat-value" data-goal-preview="${previewKey}">${valueHtml}</strong>
+    </div>
+  `;
+}
+
+function buildGoalsRevenueLandingHtml(b) {
+  return `
+    <aside class="goals-landing goals-landing--revenue" aria-label="売上の着地イメージ">
+      <p class="goals-landing__eyebrow">着地イメージ</p>
+      <div class="goals-landing__hero goals-landing__hero--split">
+        <div class="goals-landing__hero-col">
+          <span class="goals-landing__hero-label">保険単価１人あたり</span>
+          <strong class="goals-landing__hero-value goals-landing__hero-value--sm" data-goal-preview="insuranceUnitPrice">¥${(b.insuranceRevenuePerPatient || 0).toLocaleString('ja-JP')}</strong>
+        </div>
+        <div class="goals-landing__hero-col">
+          <span class="goals-landing__hero-label">自費単価１人あたり</span>
+          <strong class="goals-landing__hero-value goals-landing__hero-value--sm" data-goal-preview="selfPayUnitPrice">¥${(b.selfPayPerPatient || 0).toLocaleString('ja-JP')}</strong>
+        </div>
+      </div>
+      <div class="goals-landing__stats">
+        ${goalsLandingStat('保険点数', `${formatGoalsCount(b.insurancePointsPerPatient, { decimals: 1 })}点/人`, 'insurancePointsPerPatient')}
+        ${goalsLandingStat('保険売上', `¥${(b.monthlyInsuranceRevenue || 0).toLocaleString('ja-JP')}`, 'monthlyInsuranceRevenue')}
+        ${goalsLandingStat('自費売上', `¥${(b.monthlySelfPayRevenue || 0).toLocaleString('ja-JP')}`, 'monthlySelfPayRevenue')}
+      </div>
+    </aside>
+  `;
+}
+
+function buildGoalsPatientLandingHtml(b) {
+  return `
+    <aside class="goals-landing goals-landing--patients" aria-label="患者の着地イメージ">
+      <p class="goals-landing__eyebrow">着地イメージ</p>
+      <p class="goals-landing__note" data-goal-preview="operatingNote">${b.operatingNote}</p>
+      <div class="goals-landing__hero">
+        <span class="goals-landing__hero-label">1日患者数</span>
+        <strong class="goals-landing__hero-value" data-goal-preview="dailyVisits">${formatGoalsCount(b.dailyVisits, { decimals: 1 })}人</strong>
+      </div>
+      <div class="goals-landing__stats">
+        ${goalsLandingStat('新患数', `${formatGoalsCount(b.dailyNewPatients, { decimals: 1 })}人/日`, 'dailyNewPatients')}
+        ${goalsLandingStat('1人平均来院', `${formatGoalsCount(b.avgVisitsPerPatient, { decimals: 1 })}回`, 'avgVisitsPerPatient')}
+      </div>
+    </aside>
+  `;
+}
+
+function buildGoalsApptLandingHtml(b) {
+  return `
+    <aside class="goals-landing goals-landing--appt" aria-label="予約の着地イメージ">
+      <p class="goals-landing__eyebrow">着地イメージ</p>
+      <div class="goals-landing__hero goals-landing__hero--compact">
+        <span class="goals-landing__hero-label">1日のキャンセル率</span>
+        <strong class="goals-landing__hero-value" data-goal-preview="dailyCancelRatePct">${formatGoalsPct(b.dailyCancelRatePct)}%</strong>
+      </div>
+      <div class="goals-landing__stats">
+        ${goalsLandingStat('予約充足率', `${formatGoalsPct(b.monthlyBookingFillRatePct)}%`, 'monthlyBookingFillRatePct')}
+        ${goalsLandingStat('キャンセル数', `${formatGoalsCount(b.monthlyCancelCount)}件`, 'monthlyCancelCount')}
+        ${goalsLandingStat('無断キャンセル', `${formatGoalsCount(b.monthlyNoShowCount)}件`, 'monthlyNoShowCount')}
+      </div>
+    </aside>
+  `;
+}
+
+function buildGoalsRetentionLandingHtml(b) {
+  return `
+    <aside class="goals-landing goals-landing--retention" aria-label="定着の着地イメージ">
+      <p class="goals-landing__eyebrow">着地イメージ</p>
+      <div class="goals-landing__stats goals-landing__stats--stack">
+        ${goalsLandingStat('リコール率', `${formatGoalsPct(b.monthlyRecallRatePct)}%`, 'monthlyRecallRatePct')}
+        ${goalsLandingStat('次回予約取得率', `${formatGoalsPct(b.monthlyNextApptRatePct)}%`, 'monthlyNextApptRatePct')}
+        ${goalsLandingStat('治療中断率', `${formatGoalsPct(b.monthlyTreatmentDropoutRatePct)}%`, 'monthlyTreatmentDropoutRatePct')}
+      </div>
+    </aside>
+  `;
+}
+
+function buildGoalsSectionHtml(title, fieldsHtml, landingHtml) {
+  return `
+    <section class="goals-section">
+      <header class="goals-section__head">
+        <h2 class="goals-section__title">${title}</h2>
+      </header>
+      <div class="goals-section__body">
+        <div class="goals-section__fields">
+          <div class="goals-section__grid">
+            ${fieldsHtml}
+          </div>
+        </div>
+        ${landingHtml}
+      </div>
+    </section>
+  `;
+}
+
+function updateGoalsPreviewDom(root = document.getElementById('settings-page')) {
+  if (!root) return;
+  const b = computeGoalsLanding(ensureGoalsSettingsDraft());
+  const set = (key, text) => {
+    const el = root.querySelector(`[data-goal-preview="${key}"]`);
+    if (el) el.textContent = text;
+  };
+
+  set('insurancePointsPerPatient', `${formatGoalsCount(b.insurancePointsPerPatient, { decimals: 1 })}点/人`);
+  set('insuranceUnitPrice', `¥${(b.insuranceRevenuePerPatient || 0).toLocaleString('ja-JP')}`);
+  set('selfPayUnitPrice', `¥${(b.selfPayPerPatient || 0).toLocaleString('ja-JP')}`);
+  set('monthlyInsuranceRevenue', `¥${(b.monthlyInsuranceRevenue || 0).toLocaleString('ja-JP')}`);
+  set('monthlySelfPayRevenue', `¥${(b.monthlySelfPayRevenue || 0).toLocaleString('ja-JP')}`);
+  set('operatingNote', b.operatingNote);
+  set('dailyVisits', `${formatGoalsCount(b.dailyVisits, { decimals: 1 })}人`);
+  set('dailyNewPatients', `${formatGoalsCount(b.dailyNewPatients, { decimals: 1 })}人/日`);
+  set('avgVisitsPerPatient', `${formatGoalsCount(b.avgVisitsPerPatient, { decimals: 1 })}回`);
+  set('dailyCancelRatePct', `${formatGoalsPct(b.dailyCancelRatePct)}%`);
+  set('monthlyBookingFillRatePct', `${formatGoalsPct(b.monthlyBookingFillRatePct)}%`);
+  set('monthlyCancelCount', `${formatGoalsCount(b.monthlyCancelCount)}件`);
+  set('monthlyNoShowCount', `${formatGoalsCount(b.monthlyNoShowCount)}件`);
+  set('monthlyRecallRatePct', `${formatGoalsPct(b.monthlyRecallRatePct)}%`);
+  set('monthlyNextApptRatePct', `${formatGoalsPct(b.monthlyNextApptRatePct)}%`);
+  set('monthlyTreatmentDropoutRatePct', `${formatGoalsPct(b.monthlyTreatmentDropoutRatePct)}%`);
+}
+
+function buildGoalsSettingsPageHtml() {
+  const clinicId = getGoalsSettingsClinicId();
+  const clinic = (typeof getClinics === 'function' ? getClinics() : [])
+    .find((c) => c.id === clinicId);
+  const draft = recomputeGoalsDraft(ensureGoalsSettingsDraft());
+  const clinicName = clinic?.name || '医院';
+  const landing = computeGoalsLanding(draft, clinicId);
+
+  // 売上：月間売上目標 + 自費売上（月間）を入力
+  const revenueFields = [
+    goalsFieldHtml({
+      field: 'monthlyRevenue',
+      label: '月間売上目標',
+      value: draft.monthlyRevenue,
+      kind: 'yen',
+      prefix: '¥',
+    }),
+    goalsFieldHtml({
+      field: 'monthlySelfPayRevenue',
+      label: '自費売上',
+      value: draft.monthlySelfPayRevenue,
+      kind: 'yen',
+      prefix: '¥',
+      badge: '月間',
+    }),
+  ].join('');
+
+  const patientFields = [
+    goalsFieldHtml({
+      field: 'monthlyPatients',
+      label: '目標患者数',
+      value: draft.monthlyPatients,
+      kind: 'number',
+      suffix: '人/月',
+      badge: '実人数',
+    }),
+    goalsFieldHtml({
+      field: 'monthlyNewPatients',
+      label: '新患数',
+      value: draft.monthlyNewPatients,
+      kind: 'number',
+      suffix: '人/月',
+    }),
+    goalsFieldHtml({
+      field: 'monthlySelfPayPatients',
+      label: '自費患者',
+      value: draft.monthlySelfPayPatients,
+      kind: 'number',
+      suffix: '人/月',
+      badge: '実人数',
+    }),
+    goalsFieldHtml({
+      field: 'monthlyVisitCount',
+      label: '延べ患者数',
+      value: draft.monthlyVisitCount,
+      kind: 'number',
+      suffix: '人/月',
+    }),
+  ].join('');
+
+  const apptFields = [
+    goalsFieldHtml({
+      field: 'monthlyCancelCount',
+      label: 'キャンセル数',
+      value: draft.monthlyCancelCount,
+      kind: 'number',
+      suffix: '件/日',
+    }),
+    goalsFieldHtml({
+      field: 'monthlyNoShowCount',
+      label: '無断キャンセル数',
+      value: draft.monthlyNoShowCount,
+      kind: 'number',
+      suffix: '件/日',
+    }),
+    goalsFieldHtml({
+      field: 'monthlyBookingFillRatePct',
+      label: '予約充足率',
+      value: draft.monthlyBookingFillRatePct,
+      kind: 'pct',
+      suffix: '%/日',
+    }),
+  ].join('');
+
+  const retentionFields = [
+    goalsFieldHtml({
+      field: 'monthlyRecallRatePct',
+      label: 'リコール率',
+      value: draft.monthlyRecallRatePct,
+      kind: 'pct',
+      suffix: '%',
+    }),
+    goalsFieldHtml({
+      field: 'monthlyNextApptRatePct',
+      label: '次回予約取得率',
+      value: draft.monthlyNextApptRatePct,
+      kind: 'pct',
+      suffix: '%',
+    }),
+    goalsFieldHtml({
+      field: 'monthlyTreatmentDropoutRatePct',
+      label: '治療中断率',
+      value: draft.monthlyTreatmentDropoutRatePct,
+      kind: 'pct',
+      suffix: '%',
+    }),
+  ].join('');
+
+  return `
+    <div class="settings-page settings-page--goals" id="settings-page" data-settings-page="goals">
+      <header class="settings-page-header settings-page-header--goals">
+        <p class="settings-page-eyebrow">設定</p>
+        <h1 class="settings-page-title">目標設定</h1>
+        <p class="settings-page-lead">月間目標を入力すると、各カード右側に着地イメージが更新されます。</p>
+        <p class="goals-clinic-chip">${clinicName}</p>
+      </header>
+
+      <div class="goals-editor-stack">
+        ${buildGoalsSectionHtml('売上', revenueFields, buildGoalsRevenueLandingHtml(landing))}
+        ${buildGoalsSectionHtml('患者', patientFields, buildGoalsPatientLandingHtml(landing))}
+        ${buildGoalsSectionHtml('予約', apptFields, buildGoalsApptLandingHtml(landing))}
+        ${buildGoalsSectionHtml('定着', retentionFields, buildGoalsRetentionLandingHtml(landing))}
+
+        <div class="goals-editor__actions goals-editor__actions--bar">
+          <button type="button" class="goals-save-btn" data-action="save-goals-settings">保存する</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindGoalsSettingsPageEvents(root) {
+  if (!root || root.dataset.settingsBound === 'goals') return;
+  root.dataset.settingsBound = 'goals';
+
+  const editableKeys = new Set([
+    'monthlyRevenue',
+    'monthlySelfPayRevenue',
+    'monthlyPatients',
+    'monthlyNewPatients',
+    'monthlySelfPayPatients',
+    'monthlyVisitCount',
+    'monthlyCancelCount',
+    'monthlyNoShowCount',
+    'monthlyBookingFillRatePct',
+    'monthlyRecallRatePct',
+    'monthlyNextApptRatePct',
+    'monthlyTreatmentDropoutRatePct',
+  ]);
+
+  const syncDraftFromInput = (input) => {
+    const field = input.dataset.field;
+    if (!editableKeys.has(field)) return;
+    const draft = ensureGoalsSettingsDraft();
+    const kind = input.dataset.kind || 'number';
+    const raw = input.value;
+
+    // 入力途中の空欄は draft を更新しない（消えたように見えるのを防ぐ）
+    if (String(raw).trim() === '') {
+      updateGoalsPreviewDom(root);
+      return;
+    }
+
+    if (kind === 'yen') {
+      draft[field] = parseGoalsYenInput(raw);
+    } else if (kind === 'pct') {
+      draft[field] = parseGoalsPctInput(raw);
+    } else {
+      draft[field] = parseGoalsCountInput(raw);
+    }
+    recomputeGoalsDraft(draft);
+    updateGoalsPreviewDom(root);
+  };
+
+  root.addEventListener('input', (e) => {
+    const input = e.target.closest('[data-action="goals-input"]');
+    if (!input) return;
+    syncDraftFromInput(input);
+  });
+  root.addEventListener('blur', (e) => {
+    const input = e.target.closest('[data-action="goals-input"]');
+    if (!input) return;
+    const field = input.dataset.field;
+    if (!editableKeys.has(field)) return;
+    const draft = ensureGoalsSettingsDraft();
+    const kind = input.dataset.kind || 'number';
+    const raw = input.value;
+
+    if (kind === 'yen') {
+      draft[field] = parseGoalsYenInput(raw);
+      recomputeGoalsDraft(draft);
+      input.value = formatGoalsYenInput(draft[field]);
+    } else if (kind === 'pct') {
+      draft[field] = parseGoalsPctInput(raw);
+      recomputeGoalsDraft(draft);
+      input.value = formatGoalsPct(draft[field]);
+    } else {
+      draft[field] = parseGoalsCountInput(raw);
+      recomputeGoalsDraft(draft);
+      // type=text なのでカンマ付きでも消えないが、入力中は素の数字のままがわかりやすい
+      input.value = formatGoalsCountRaw(draft[field]);
+    }
+    updateGoalsPreviewDom(root);
+  }, true);
+  root.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action="save-goals-settings"]');
+    if (!btn) return;
+    e.preventDefault();
+    const draft = recomputeGoalsDraft(ensureGoalsSettingsDraft());
+    const clinicId = getGoalsSettingsClinicId();
+    if (typeof saveClinicGoals === 'function') {
+      const saved = saveClinicGoals(clinicId, draft);
+      state.settingsGoalsDraft = { _clinicId: clinicId, ...saved };
+    }
+    showSettingsToast('更新しました。');
+    invalidateMetricsCachesAfterGoalsSave();
+    updateGoalsPreviewDom(root);
+  });
+}
+
+function invalidateMetricsCachesAfterGoalsSave() {
+  if (typeof clearPeriodDetailsCache === 'function') clearPeriodDetailsCache();
+}
+
+async function openGoalsSettings() {
+  if (state.settingsPage === 'holidays') {
+    const ok = await confirmLeaveHolidaySettings();
+    if (!ok) return;
+    clearHolidaySettingsDraft();
+    resetHolidayAddForm();
+  }
+  state.settingsPage = 'goals';
+  state.sidebarView = 'settings';
+  clearGoalsSettingsDraft();
+  ensureGoalsSettingsDraft();
+  renderNav();
+  renderMeta();
+  renderSettingsMain();
+}
+
+async function openHolidaySettings() {
   if (typeof buildMonthHolidayGrid !== 'function') return;
+  if (state.settingsPage === 'goals') {
+    clearGoalsSettingsDraft();
+  }
   state.settingsPage = 'holidays';
   state.sidebarView = 'settings';
   if (!state.settingsCalYear) {
@@ -2654,21 +3331,21 @@ function openHolidaySettings() {
 
 async function closeHolidaySettingsPage() {
   if (!state.settingsPage) return false;
-  const ok = await confirmLeaveHolidaySettings();
-  if (!ok) return false;
+  if (state.settingsPage === 'holidays') {
+    const ok = await confirmLeaveHolidaySettings();
+    if (!ok) return false;
+  }
   leaveHolidaySettingsView();
   return true;
 }
 
-function openSidebarSettings() {
-  state.sidebarView = 'settings';
-  renderNav();
-  renderMeta();
+async function openSidebarSettings() {
+  await openGoalsSettings();
 }
 
 async function closeSidebarSettings() {
   const hadSettingsPage = !!state.settingsPage;
-  if (hadSettingsPage) {
+  if (state.settingsPage === 'holidays') {
     const ok = await confirmLeaveHolidaySettings();
     if (!ok) return false;
   }
@@ -2676,6 +3353,7 @@ async function closeSidebarSettings() {
   state.settingsPage = null;
   clearHolidaySettingsDraft();
   resetHolidayAddForm();
+  clearGoalsSettingsDraft();
   renderNav();
   renderMeta();
   if (hadSettingsPage) restoreAppMainView();
@@ -2825,7 +3503,19 @@ function onHolidaySettingsClick(e) {
     const key = actionEl.dataset.dateKey;
     const parsed = typeof parseDateKey === 'function' ? parseDateKey(key) : null;
     if (!parsed) return;
-    draftCycleSpecialDay(parsed.year, parsed.month, parsed.day);
+    const result = draftCycleSpecialDay(parsed.year, parsed.month, parsed.day);
+    if (result?.needsHours) {
+      const defaults = typeof getDefaultOpenHoursFromSchedule === 'function'
+        ? getDefaultOpenHoursFromSchedule(result.snap)
+        : { openStart: '09:00', openEnd: '18:30', breakStart: '13:00', breakEnd: '14:30' };
+      const dateLabel = `${parsed.month}/${parsed.day}`;
+      showSpecialOpenHoursDialog({ dateLabel, defaults }).then((hours) => {
+        if (!hours) return;
+        draftCycleSpecialDay(parsed.year, parsed.month, parsed.day, hours);
+        renderSettingsMain();
+      });
+      return;
+    }
     renderSettingsMain();
   }
 }
@@ -2942,7 +3632,7 @@ const IS_INSIGHT_PAGE = !!document.getElementById('insight-main');
 function handleNavTreeClick(e) {
   if (e.target.closest('.nav-row__drag-handle')) return;
 
-  const settingsActionEl = e.target.closest('[data-action="close-sidebar-settings"], [data-action="open-holiday-settings"]');
+  const settingsActionEl = e.target.closest('[data-action="close-sidebar-settings"], [data-action="open-holiday-settings"], [data-action="open-goals-settings"]');
   if (settingsActionEl) {
     e.preventDefault();
     e.stopPropagation();
@@ -2953,6 +3643,10 @@ function handleNavTreeClick(e) {
     }
     if (action === 'open-holiday-settings') {
       openHolidaySettings();
+      return;
+    }
+    if (action === 'open-goals-settings') {
+      openGoalsSettings();
       return;
     }
   }
@@ -3003,7 +3697,10 @@ function handleNavTreeClick(e) {
 
   if (state.settingsPage && (action === 'select-clinic' || action === 'select-role' || action === 'select-staff')) {
     e.preventDefault();
-    confirmLeaveHolidaySettings().then((ok) => {
+    const leave = state.settingsPage === 'holidays'
+      ? confirmLeaveHolidaySettings()
+      : Promise.resolve(true);
+    leave.then((ok) => {
       if (!ok) return;
       leaveHolidaySettingsView();
       applyNavSelection();

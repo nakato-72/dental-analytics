@@ -77,6 +77,7 @@ function computeAnchorPopoverRect(anchorRect, rowCount = 3) {
 }
 
 function openPopover(type, period, anchorRect, triggerId, options = {}) {
+  const resolvedType = normalizePopoverType(type);
   if (triggerId && popoverState.open && popoverState.triggerId === triggerId) {
     closePopover();
     return;
@@ -87,13 +88,13 @@ function openPopover(type, period, anchorRect, triggerId, options = {}) {
   popoverState.sortKey = null;
   popoverState.sortDir = 'asc';
 
-  const rows = resolvePopoverRows(type, period);
+  const rows = resolvePopoverRows(resolvedType, period);
   const defaults = anchorRect
     ? computeAnchorPopoverRect(anchorRect, rows.length)
     : getDefaultPopoverRect();
 
   popoverState.open = true;
-  popoverState.type = type;
+  popoverState.type = resolvedType;
   popoverState.period = period;
   popoverState.triggerId = triggerId || null;
   popoverState.width = defaults.width;
@@ -117,6 +118,31 @@ function closePopover() {
   renderPopover();
 }
 
+function buildDetailReturnUrl() {
+  if (typeof buildInsightUrl === 'function' && typeof insightState !== 'undefined') {
+    return buildInsightUrl();
+  }
+  const file = (window.location.pathname.split('/').pop() || 'index.html').split('?')[0];
+  if (file === 'insight.html' || file === 'index.html') {
+    return `${file}${window.location.search || ''}`;
+  }
+  return 'index.html';
+}
+
+function sanitizeDetailReturnUrl(raw) {
+  if (!raw) return null;
+  let url = String(raw).trim();
+  try {
+    url = decodeURIComponent(url);
+  } catch {
+    /* keep raw */
+  }
+  if (!url || url.startsWith('http') || url.startsWith('//') || url.includes('..')) return null;
+  const pathOnly = url.split('#')[0];
+  if (!/^(index|insight)\.html(\?.*)?$/.test(pathOnly)) return null;
+  return pathOnly;
+}
+
 function navigateToDetailPage(type, period) {
   const navState = typeof state !== 'undefined' ? state : {
     level: 'clinic',
@@ -125,25 +151,29 @@ function navigateToDetailPage(type, period) {
     staffId: '',
   };
   const params = new URLSearchParams({
-    type,
+    type: normalizePopoverType(type),
     period,
     level: navState.level,
     clinicId: navState.clinicId || '',
     role: navState.role || '',
     staffId: navState.staffId || '',
   });
+  const returnUrl = buildDetailReturnUrl();
+  if (returnUrl) params.set('return', returnUrl);
   window.location.href = `detail.html?${params.toString()}`;
 }
 
 function resolvePopoverConfig(type) {
+  const resolvedType = normalizePopoverType(type);
   if (typeof getInsightPopoverConfig === 'function') {
-    const insight = getInsightPopoverConfig(type);
+    const insight = getInsightPopoverConfig(resolvedType);
     if (insight) return insight;
   }
-  return typeof getPopoverConfig === 'function' ? getPopoverConfig(type) : null;
+  return typeof getPopoverConfig === 'function' ? getPopoverConfig(resolvedType) : null;
 }
 
 function resolvePopoverRows(type, period) {
+  const resolvedType = normalizePopoverType(type);
   if (popoverState.customRows) return popoverState.customRows;
   const metricsContext = typeof getMetricsContext === 'function' && typeof state !== 'undefined'
     ? getMetricsContext(state)
@@ -154,10 +184,10 @@ function resolvePopoverRows(type, period) {
   const popoverOpts = { period, detail, metricsContext };
 
   if (typeof getInsightPopoverRows === 'function') {
-    const insightRows = getInsightPopoverRows(type, popoverOpts);
+    const insightRows = getInsightPopoverRows(resolvedType, popoverOpts);
     if (insightRows.length) return insightRows;
   }
-  return typeof getPopoverRows === 'function' ? getPopoverRows(type, period, popoverOpts) : [];
+  return typeof getPopoverRows === 'function' ? getPopoverRows(resolvedType, period, popoverOpts) : [];
 }
 
 const POPOVER_DRAG_HANDLE = `
@@ -241,6 +271,132 @@ function togglePopoverSortState(state, key) {
   }
 }
 
+const POPOVER_COL_WIDTHS_KEY = 'popoverColumnWidths';
+const POPOVER_COL_MIN_WIDTH = 56;
+
+let colResizeSession = null;
+
+const UNIFIED_CANCEL_POPOVER_TYPES = {
+  insightApptCancelSameDay: 'insightApptCancel',
+  insightApptCancelAdvance: 'insightApptCancel',
+  insightApptNoShow: 'insightApptCancel',
+};
+
+function normalizePopoverType(type) {
+  return UNIFIED_CANCEL_POPOVER_TYPES[type] || type;
+}
+
+function loadPopoverColumnWidths(type) {
+  try {
+    const all = JSON.parse(localStorage.getItem(POPOVER_COL_WIDTHS_KEY) || '{}');
+    return all[normalizePopoverType(type)] || {};
+  } catch {
+    return {};
+  }
+}
+
+function savePopoverColumnWidths(type, widths) {
+  try {
+    const key = normalizePopoverType(type);
+    const all = JSON.parse(localStorage.getItem(POPOVER_COL_WIDTHS_KEY) || '{}');
+    all[key] = widths;
+    localStorage.setItem(POPOVER_COL_WIDTHS_KEY, JSON.stringify(all));
+  } catch {
+    /* ignore */
+  }
+}
+
+function measurePopoverColumnWidths(table) {
+  const widths = {};
+  table.querySelectorAll('colgroup col[data-col-key]').forEach((col) => {
+    const key = col.dataset.colKey;
+    const th = table.querySelector(`th[data-col-key="${key}"]`);
+    widths[key] = Math.max(POPOVER_COL_MIN_WIDTH, Math.round(th?.getBoundingClientRect().width || col.offsetWidth || 80));
+  });
+  return widths;
+}
+
+function sumPopoverColumnWidths(widths) {
+  return Object.values(widths).reduce((sum, w) => sum + (Number(w) || 0), 0);
+}
+
+/** 全列を絶対px指定し、テーブル幅も列合計にする（他列への再配分を防ぐ） */
+function setPopoverTableColumnWidths(table, widths) {
+  if (!table || !widths) return;
+  table.classList.add('popover-table--fixed-cols');
+  Object.entries(widths).forEach(([key, w]) => {
+    const col = table.querySelector(`colgroup col[data-col-key="${key}"]`);
+    if (col) col.style.width = `${Math.max(POPOVER_COL_MIN_WIDTH, Math.round(w))}px`;
+  });
+  const total = sumPopoverColumnWidths(widths);
+  if (total > 0) {
+    table.style.width = `${total}px`;
+    table.style.minWidth = `${total}px`;
+  }
+}
+
+function resolveFullPopoverColumnWidths(table, type) {
+  const keys = [...table.querySelectorAll('colgroup col[data-col-key]')].map((c) => c.dataset.colKey);
+  const saved = loadPopoverColumnWidths(type);
+  const measured = measurePopoverColumnWidths(table);
+  const widths = {};
+  keys.forEach((key) => {
+    widths[key] = saved[key] != null ? Number(saved[key]) : measured[key];
+  });
+  return {
+    widths,
+    hasSaved: keys.some((key) => saved[key] != null),
+  };
+}
+
+function applyPopoverColumnWidths(table, type) {
+  if (!table) return;
+  const { widths, hasSaved } = resolveFullPopoverColumnWidths(table, type);
+  if (!hasSaved) {
+    table.classList.remove('popover-table--fixed-cols');
+    table.style.width = '';
+    table.style.minWidth = '';
+    return;
+  }
+  setPopoverTableColumnWidths(table, widths);
+}
+
+function startPopoverColumnResize(type, table, colKey, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const col = table.querySelector(`colgroup col[data-col-key="${colKey}"]`);
+  const th = table.querySelector(`th[data-col-key="${colKey}"]`);
+  if (!col || !th) return;
+
+  const { widths } = resolveFullPopoverColumnWidths(table, type);
+  setPopoverTableColumnWidths(table, widths);
+
+  colResizeSession = {
+    type,
+    table,
+    colKey,
+    startX: e.clientX,
+    startWidth: widths[colKey] || Math.round(th.getBoundingClientRect().width),
+    widths: { ...widths },
+  };
+  document.body.classList.add('popover-col-resizing');
+}
+
+function onPopoverColumnResizeMove(e) {
+  if (!colResizeSession) return;
+  const dx = e.clientX - colResizeSession.startX;
+  const next = Math.max(POPOVER_COL_MIN_WIDTH, Math.round(colResizeSession.startWidth + dx));
+  colResizeSession.widths[colResizeSession.colKey] = next;
+  setPopoverTableColumnWidths(colResizeSession.table, colResizeSession.widths);
+}
+
+function endPopoverColumnResize() {
+  if (!colResizeSession) return;
+  savePopoverColumnWidths(colResizeSession.type, colResizeSession.widths);
+  colResizeSession = null;
+  document.body.classList.remove('popover-col-resizing');
+}
+
 function renderPopoverSortIcon(sortKey, sortDir, colKey) {
   if (sortKey !== colKey) return '↕';
   return sortDir === 'asc' ? '↑' : '↓';
@@ -259,8 +415,19 @@ function renderPopoverTableHeadRow(config, sortKey, sortDir) {
   return config.columns.map((c) => {
     const active = sortKey === c.key ? ' popover-sort-btn--active' : '';
     const icon = renderPopoverSortIcon(sortKey, sortDir, c.key);
-    return `<th class="popover-th-sortable"><button type="button" class="popover-sort-btn${active}" data-action="popover-sort" data-sort-key="${c.key}" title="クリックで並び替え">${c.label}<span class="popover-sort-icon" aria-hidden="true">${icon}</span></button></th>`;
+    return `<th class="popover-th-sortable" data-col-key="${c.key}">
+      <button type="button" class="popover-sort-btn${active}" data-action="popover-sort" data-sort-key="${c.key}" title="クリックで並び替え">${c.label}<span class="popover-sort-icon" aria-hidden="true">${icon}</span></button>
+      <span class="popover-col-resize" data-col-resize="${c.key}" title="列幅を調整" aria-hidden="true"></span>
+    </th>`;
   }).join('');
+}
+
+function renderPopoverColgroup(config, widths = {}) {
+  return `<colgroup>${config.columns.map((c) => {
+    const w = widths[c.key];
+    const style = w != null ? ` style="width:${w}px"` : '';
+    return `<col data-col-key="${c.key}"${style}>`;
+  }).join('')}</colgroup>`;
 }
 
 function renderPopoverTableBodyRows(config, rows, sortKey, sortDir) {
@@ -286,7 +453,8 @@ function updatePopoverTableSortInPlace(type, rows, sortState) {
   const config = resolvePopoverConfig(type);
   if (!config) return false;
 
-  const table = document.querySelector('.popover-panel .popover-table');
+  const table = document.querySelector('.popover-panel .popover-table')
+    || document.querySelector('.detail-page-table');
   if (!table) return false;
 
   const tbody = table.querySelector('tbody');
@@ -299,7 +467,8 @@ function updatePopoverTableSortInPlace(type, rows, sortState) {
 }
 
 function renderPopoverTable(type, rows, options = {}) {
-  const config = resolvePopoverConfig(type);
+  const resolvedType = normalizePopoverType(type);
+  const config = resolvePopoverConfig(resolvedType);
   if (!config) return '';
 
   const {
@@ -310,12 +479,28 @@ function renderPopoverTable(type, rows, options = {}) {
     tableClass = 'popover-table',
   } = options;
 
+  const saved = loadPopoverColumnWidths(resolvedType);
+  const defaultWidth = Math.max(80, Math.floor(640 / Math.max(config.columns.length, 1)));
+  const widths = {};
+  const useFixed = config.columns.some((c) => saved[c.key] != null);
+  if (useFixed) {
+    config.columns.forEach((c) => {
+      widths[c.key] = saved[c.key] != null ? Number(saved[c.key]) : defaultWidth;
+    });
+  }
+  const tableWidth = useFixed ? sumPopoverColumnWidths(widths) : null;
+  const fixedClass = useFixed ? ' popover-table--fixed-cols' : '';
+  const tableStyle = tableWidth != null
+    ? ` style="width:${tableWidth}px;min-width:${tableWidth}px"`
+    : '';
   const head = renderPopoverTableHeadRow(config, sortKey, sortDir);
   const body = renderPopoverTableBodyRows(config, rows, sortKey, sortDir);
+  const colgroup = renderPopoverColgroup(config, useFixed ? widths : {});
 
   return `
     <div class="${wrapperClass}">
-      <table class="${tableClass} popover-table--gap-${rowGap}">
+      <table class="${tableClass} popover-table--gap-${rowGap}${fixedClass}" data-popover-type="${resolvedType}"${tableStyle}>
+        ${colgroup}
         <thead><tr>${head}</tr></thead>
         <tbody>${body}</tbody>
       </table>
@@ -441,6 +626,11 @@ function onDragMove(e) {
 }
 
 function onPointerEnd() {
+  if (colResizeSession) {
+    endPopoverColumnResize();
+    suppressOutsideClose = true;
+    requestAnimationFrame(() => { suppressOutsideClose = false; });
+  }
   if (resizeSession || dragSession) {
     suppressOutsideClose = true;
     requestAnimationFrame(() => { suppressOutsideClose = false; });
@@ -449,8 +639,9 @@ function onPointerEnd() {
   dragSession = null;
   document.removeEventListener('mousemove', onResizeMove);
   document.removeEventListener('mousemove', onDragMove);
+  document.removeEventListener('mousemove', onPopoverColumnResizeMove);
   document.removeEventListener('mouseup', onPointerEnd);
-  document.body.classList.remove('popover-resizing', 'popover-dragging', 'popover-resize-ew', 'popover-resize-ns');
+  document.body.classList.remove('popover-resizing', 'popover-dragging', 'popover-resize-ew', 'popover-resize-ns', 'popover-col-resizing');
 }
 
 function startResize(corner, e) {
@@ -496,6 +687,19 @@ function initPopoverEvents() {
   root.dataset.bound = '1';
 
   document.addEventListener('mousedown', (e) => {
+    const colHandle = e.target.closest('[data-col-resize]');
+    if (colHandle) {
+      const table = colHandle.closest('table');
+      const type = table?.dataset.popoverType
+        || (popoverState.open ? popoverState.type : null);
+      if (table && type) {
+        startPopoverColumnResize(type, table, colHandle.dataset.colResize, e);
+        document.addEventListener('mousemove', onPopoverColumnResizeMove);
+        document.addEventListener('mouseup', onPointerEnd);
+      }
+      return;
+    }
+
     if (!popoverState.open) return;
 
     const handle = e.target.closest('[data-resize]');
@@ -528,6 +732,11 @@ function initPopoverEvents() {
   });
 
   document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-col-resize]')) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const action = e.target.closest('[data-action]')?.dataset.action;
     if (action === 'popover-close') {
       closePopover();
@@ -555,5 +764,21 @@ function initPopoverEvents() {
     if (e.target.closest('[data-action="open-popover"]')) return;
     if (e.target.closest('[data-action="open-insight-popover"]')) return;
     closePopover();
+  });
+}
+
+/** 詳細ページでも列幅リサイズを有効化 */
+function initPopoverColumnResizeForDetail() {
+  if (document.body.dataset.colResizeBound) return;
+  document.body.dataset.colResizeBound = '1';
+  document.addEventListener('mousedown', (e) => {
+    const colHandle = e.target.closest('.detail-page-table [data-col-resize]');
+    if (!colHandle) return;
+    const table = colHandle.closest('table');
+    const type = table?.dataset.popoverType;
+    if (!table || !type) return;
+    startPopoverColumnResize(type, table, colHandle.dataset.colResize, e);
+    document.addEventListener('mousemove', onPopoverColumnResizeMove);
+    document.addEventListener('mouseup', onPointerEnd);
   });
 }

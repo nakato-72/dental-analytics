@@ -39,9 +39,11 @@ const POPOVER_CONFIG = {
     title: 'キャンセル数',
     columns: [
       { key: 'cancelType', label: 'キャンセル種別' },
+      { key: 'cancelDate', label: 'キャンセル日' },
       { key: 'chartNo', label: 'カルテNo' },
       { key: 'name', label: '氏名' },
       { key: 'age', label: '年齢' },
+      { key: 'apptDate', label: '予約日' },
       { key: 'time', label: '予約時間' },
     ],
   },
@@ -67,10 +69,13 @@ const POPOVER_CONFIG = {
 
 const CANCEL_TYPE_CLASS = {
   '当日': 'cancel-same-day',
+  '当日キャンセル': 'cancel-same-day',
   '前日': 'cancel-advance-day',
   '前日以降': 'cancel-advance-day',
+  '前日以降キャンセル': 'cancel-advance-day',
   '事前': 'cancel-advance-day',
   '無断': 'cancel-no-show',
+  '無断キャンセル': 'cancel-no-show',
 };
 
 /** 期間・種別ごとのモック行データ */
@@ -88,9 +93,9 @@ const POPOVER_MOCK_ROWS = {
     { chartNo: 'B-9288', name: '中村 里奈', age: 27, doctor: '田中 健一', dh: '山田 恵', time: '15:30', slotMinutes: '30分', treatment: '矯正相談' },
   ],
   cancellations: [
-    { cancelType: '当日', chartNo: 'C-3310', name: '松本 優', age: 36, time: '10:30' },
-    { cancelType: '前日', chartNo: 'C-3388', name: '井上 拓也', age: 29, time: '13:00' },
-    { cancelType: '無断', chartNo: 'C-3401', name: '木村 さくら', age: 42, time: '16:00' },
+    { cancelType: '当日キャンセル', cancelDate: '2026/06/23', chartNo: 'C-3310', name: '松本 優', age: 36, time: '10:30', apptDate: '2026/06/23' },
+    { cancelType: '前日以降キャンセル', cancelDate: '2026/06/20', chartNo: 'C-3388', name: '井上 拓也', age: 29, time: '13:00', apptDate: '2026/06/23' },
+    { cancelType: '無断キャンセル', cancelDate: '2026/06/23', chartNo: 'C-3401', name: '木村 さくら', age: 42, time: '16:00', apptDate: '2026/06/23' },
   ],
   receivables: [
     { chartNo: 'D-2201', name: '斎藤 浩二', age: 48, amount: '¥8,600' },
@@ -115,7 +120,7 @@ const POPOVER_PERIOD_EXTRA = {
       { chartNo: 'B-9322', name: '前田 由美', age: 36, doctor: '田中 健一', dh: '鈴木 美咲', time: '16:00', slotMinutes: '45分', treatment: 'インレー装着' },
     ],
     cancellations: [
-      { cancelType: '事前', chartNo: 'C-3420', name: '西村 健', age: 47, time: '11:00' },
+      { cancelType: '前日以降キャンセル', cancelDate: '2026/06/18', chartNo: 'C-3420', name: '西村 健', age: 47, time: '11:00', apptDate: '2026/06/22' },
     ],
     receivables: [
       { chartNo: 'D-2310', name: '福田 恵子', age: 42, amount: '¥12,400' },
@@ -137,8 +142,8 @@ const POPOVER_PERIOD_EXTRA = {
       { chartNo: 'B-9355', name: '三浦 拓海', age: 29, doctor: '佐藤 誠', dh: '鈴木 美咲', time: '17:00', slotMinutes: '60分', treatment: 'インプラント相談' },
     ],
     cancellations: [
-      { cancelType: '前日', chartNo: 'C-3450', name: '村上 あゆみ', age: 31, time: '14:30' },
-      { cancelType: '無断', chartNo: 'C-3462', name: '橋本 誠', age: 44, time: '10:00' },
+      { cancelType: '前日以降キャンセル', cancelDate: '2026/06/10', chartNo: 'C-3450', name: '村上 あゆみ', age: 31, time: '14:30', apptDate: '2026/06/15' },
+      { cancelType: '無断キャンセル', cancelDate: '2026/05/20', chartNo: 'C-3462', name: '橋本 誠', age: 44, time: '10:00', apptDate: '2026/05/20' },
     ],
     receivables: [
       { chartNo: 'D-2380', name: '大野 香織', age: 39, amount: '¥18,200' },

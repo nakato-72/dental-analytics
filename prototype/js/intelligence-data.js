@@ -132,7 +132,10 @@ function buildUtilizationIntelPanel(periodDetail, override = {}) {
     ? getUtilization(periodDetail)
     : { slots: 40, used: 31, empty: 9, ratePct: 78.4 };
   const rate = util.ratePct ?? (typeof getUtilizationRatePct === 'function' ? getUtilizationRatePct(util) : 78.4);
+  const used = Math.max(0, util.used || 0);
+  const empty = Math.max(0, util.empty ?? Math.max(0, (util.slots || 0) - used));
   return {
+    id: 'utilization',
     icon: INTELLIGENCE_ICONS.utilization,
     label: '稼働率',
     value: String(rate),
@@ -141,7 +144,11 @@ function buildUtilizationIntelPanel(periodDetail, override = {}) {
     trend: override.trend ?? 'up',
     trendText: override.trendText ?? '+2.1pt',
     trendLabel: override.trendLabel ?? '前週比',
-    progress: Math.min(100, Math.round((rate / 82) * 100)),
+    progress: util.slots > 0 ? Math.round((used / util.slots) * 100) : 0,
+    progressSegments: [
+      { label: '実績', value: used, color: '#10b981' },
+      { label: '空き枠', value: empty, color: '#94a3b8' },
+    ],
     accent: '#10b981',
   };
 }
@@ -173,17 +180,23 @@ function buildQuestionnaireIntelPanel(periodDetail, override = {}) {
   const rate = typeof getQuestionnaireDoneRatePct === 'function'
     ? getQuestionnaireDoneRatePct(q)
     : Math.round(((q.breakdown.done / q.total) || 0) * 1000) / 10;
+  const done = Math.max(0, q.breakdown?.done || 0);
+  const pending = Math.max(0, q.breakdown?.pending || 0);
   return {
     id: 'questionnaire',
     icon: INTELLIGENCE_ICONS.questionnaire,
     label: '問診',
     value: String(rate),
     unit: '%',
-    sub: override.sub ?? `完了 ${q.breakdown.done}件 / 未回答 ${q.breakdown.pending}件`,
+    sub: override.sub ?? `完了 ${done}件 / 未回答 ${pending}件`,
     trend: override.trend ?? 'up',
     trendText: override.trendText ?? '+3件',
     trendLabel: override.trendLabel ?? '前日比',
-    progress: Math.min(100, Math.round((rate / 85) * 100)),
+    progress: (done + pending) > 0 ? Math.round((done / (done + pending)) * 100) : 0,
+    progressSegments: [
+      { label: '完了', value: done, color: '#10b981' },
+      { label: '未回答', value: pending, color: '#f59e0b' },
+    ],
     accent: '#8b5cf6',
   };
 }
@@ -211,19 +224,31 @@ function buildIntelPanels(overrides = {}, periodKey = '本日', metricsContext =
     staffSales: defaultStaff,
     utilization: buildUtilizationIntelPanel(periodDetail, overrides.utilization),
     appointments: buildAppointmentsPanel(periodKey, overrides.appointments, periodDetail),
-    selfPay: {
-      id: 'selfPay',
-      icon: INTELLIGENCE_ICONS.selfPay,
-      label: '自費',
-      value: intelFormatYen(Math.round((periodDetail?.breakdown?.selfPay) || 0)),
-      unit: '',
-      sub: formatSelfPayRateSub(periodDetail?.breakdown, periodTotal, 'インプラ上位'),
-      trend: 'up',
-      trendText: '+4.2%',
-      trendLabel: '前日比',
-      progress: 72,
-      accent: '#ec4899',
-    },
+    selfPay: (() => {
+      const topMenu = typeof buildTopSelfPaySegments === 'function'
+        ? buildTopSelfPaySegments(periodDetail)
+        : { segments: [], total: periodDetail?.breakdown?.selfPay || 0 };
+      const segments = (topMenu.segments || []).filter((s) => (s.value || 0) > 0);
+      const selfTotal = topMenu.total || 0;
+      return {
+        id: 'selfPay',
+        icon: INTELLIGENCE_ICONS.selfPay,
+        label: '自費',
+        value: intelFormatYen(Math.round(selfTotal)),
+        unit: '',
+        sub: formatSelfPayRateSub(periodDetail?.breakdown, periodTotal, 'インプラ上位'),
+        trend: 'up',
+        trendText: '+4.2%',
+        trendLabel: '前日比',
+        progress: 100,
+        progressSegments: segments.map((s) => ({
+          label: s.label,
+          value: s.value,
+          color: s.color,
+        })),
+        accent: '#ec4899',
+      };
+    })(),
     questionnaire: buildQuestionnaireIntelPanel(periodDetail, overrides.questionnaire),
   };
 
@@ -313,6 +338,7 @@ function buildPatientsPanel(periodKey, outpatientOverride = {}, visitingOverride
   const outpatient = buildClinicVisitsPanel(periodKey, outpatientOverride, detail);
   const visiting = buildVisitingPatientsPanel(periodKey, visitingOverride, detail);
   const patientTotal = outpatient.visitTotal + visiting.visitTotal;
+  const defaultSub = `外来 ${outpatient.visitTotal}人 / 訪問 ${visiting.visitTotal}人`;
 
   return {
     type: 'visitBreakdown',
@@ -322,7 +348,8 @@ function buildPatientsPanel(periodKey, outpatientOverride = {}, visitingOverride
     visitTotal: patientTotal,
     visitBreakdown: mergeVisitBreakdowns(outpatient.visitBreakdown, visiting.visitBreakdown),
     unit: '人',
-    sub: `外来 ${outpatient.visitTotal}人 / 訪問 ${visiting.visitTotal}人`,
+    sub: outpatientOverride.sub || defaultSub,
+    progress: outpatientOverride.progress,
     trend: outpatient.trend,
     trendText: outpatient.trendText,
     trendLabel: outpatient.trendLabel,
@@ -411,7 +438,7 @@ const APPOINTMENT_BREAKDOWN_DEFAULTS = {
   '今年': { total: 5240, visited: 4892, notVisited: 280, cancelled: 48, noShow: 20 },
 };
 
-/** 予約数カード（合計＋来院済/未来院/キャンセル/無断キャンセル） */
+/** 予約数カード（合計＋来院済/未来院/当日/前日以降/無断） */
 function buildAppointmentsPanel(periodKey, override = {}, periodDetail = null) {
   const detail = periodDetail || getActivePeriodDetail(periodKey);
   const stored = typeof getAppointments === 'function'
@@ -521,8 +548,22 @@ function getIntelligenceData(periodKey, metricsContext = null) {
   const detail = getActivePeriodDetail(periodKey, metricsContext);
   const entityKey = metricsContext?.entityKey || 'clinic-sakura';
   const baseOverrides = (entityKey === 'clinic-sakura' || entityKey === 'all')
-    ? (PERIOD_INTEL_OVERRIDES[periodKey] || PERIOD_INTEL_OVERRIDES['本日'])
+    ? { ...(PERIOD_INTEL_OVERRIDES[periodKey] || PERIOD_INTEL_OVERRIDES['本日']) }
     : {};
+  if (periodKey === '今月' && typeof getMonthlyPatientGoal === 'function') {
+    const patientGoal = getMonthlyPatientGoal(entityKey === 'all' ? 'clinic-sakura' : entityKey);
+    const outpatient = detail?.visits || 0;
+    const visiting = detail?.patients?.visiting?.total || 0;
+    const visitTotal = outpatient + visiting;
+    const progress = patientGoal > 0
+      ? Math.min(100, Math.round((visitTotal / patientGoal) * 100))
+      : 0;
+    baseOverrides.visits = {
+      ...(baseOverrides.visits || {}),
+      sub: `目標 ${patientGoal.toLocaleString('ja-JP')}人（実人数）`,
+      progress,
+    };
+  }
   const entityOverrides = typeof buildIntelOverridesForEntity === 'function'
     ? buildIntelOverridesForEntity(entityKey, periodKey, detail)
     : {};

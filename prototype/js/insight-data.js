@@ -346,12 +346,12 @@ function buildAppointmentStatusTrendChart(period, detail, weight = 1, metricsCon
     return [
       { name: '来院済', color: '#10b981', values: data.visited },
       { name: '未来院', color: '#0ea5e9', values: data.notVisited },
-      { name: '当日CXL', color: '#eab308', values: data.cancelSameDay },
-      { name: '前日以降CXL', color: '#f59e0b', values: data.cancelAdvance },
-      { name: '無断', color: '#ef4444', values: data.noShow },
+      { name: '当日キャンセル', color: '#eab308', values: data.cancelSameDay },
+      { name: '前日以降キャンセル', color: '#f59e0b', values: data.cancelAdvance },
+      { name: '無断キャンセル', color: '#ef4444', values: data.noShow },
     ];
   };
-  const subBase = '来院済 / 未来院 / 当日CXL / 前日以降CXL / 無断';
+  const subBase = '来院済 / 未来院 / 当日キャンセル / 前日以降キャンセル / 無断キャンセル';
 
   if (period === '今年') {
     const yearly = buildYearlyAppointments(detail, weight);
@@ -442,10 +442,11 @@ function buildMonthlyDailyVisitBreakdown(detail, metricsContext, weight = 1) {
   return { labels: [], pureFirst: [], first: [], return: [], other: [] };
 }
 
-/** 月別（1〜12月）来院内訳 */
+/** 月別（1〜12月）来院内訳。charts に無い月・未来月は合成せず 0。 */
 function buildYearMonthVisitBreakdown(detail, weight = 1) {
   const labels = Array.from({ length: 12 }, (_, i) => `${i + 1}月`);
   const idx = new Map((detail?.charts?.labels || []).map((l, i) => [String(l), i]));
+  const asOfMonth = resolveInsightAsOfMonth(detail);
   const pureFirst = [];
   const first = [];
   const returnV = [];
@@ -453,24 +454,29 @@ function buildYearMonthVisitBreakdown(detail, weight = 1) {
 
   labels.forEach((m, i) => {
     const chartIdx = idx.get(m);
-    if (chartIdx != null) {
-      const part = pickVisitBreakdownAt(detail, chartIdx);
-      pureFirst.push(Math.max(0, Math.round(part.pureFirst * weight)));
-      first.push(Math.max(0, Math.round(part.first * weight)));
-      returnV.push(Math.max(0, Math.round(part.return * weight)));
-      other.push(Math.max(0, Math.round(part.other * weight)));
+    if (i + 1 > asOfMonth || chartIdx == null) {
+      pureFirst.push(0);
+      first.push(0);
+      returnV.push(0);
+      other.push(0);
       return;
     }
-    const part = typeof buildVisitBreakdownAtTotal === 'function'
-      ? buildVisitBreakdownAtTotal(detail, Math.max(0, Math.round((680 + i * 24) * weight)), weight)
-      : { pureFirst: 0, first: 0, return: 0, other: 0 };
-    pureFirst.push(part.pureFirst);
-    first.push(part.first);
-    returnV.push(part.return);
-    other.push(part.other);
+    const part = pickVisitBreakdownAt(detail, chartIdx);
+    pureFirst.push(Math.max(0, Math.round(part.pureFirst * weight)));
+    first.push(Math.max(0, Math.round(part.first * weight)));
+    returnV.push(Math.max(0, Math.round(part.return * weight)));
+    other.push(Math.max(0, Math.round(part.other * weight)));
   });
 
-  return { labels, pureFirst, first, return: returnV, other };
+  return {
+    labels,
+    pureFirst,
+    first,
+    return: returnV,
+    other,
+    asOfMonth,
+    focusIndex: asOfMonth - 1,
+  };
 }
 
 /** 年別来院内訳 */
@@ -924,13 +930,15 @@ function buildYoYCompareChart(period, detail) {
   if (period === '今月') {
     const labels = Array.from({ length: 12 }, (_, i) => `${i + 1}月`);
     const idx = new Map((detail?.charts?.labels || []).map((l, i) => [String(l), i]));
+    const asOfMonth = resolveInsightAsOfMonth(detail);
     const pick = (arr, label) => {
       const i = idx.get(label);
       return i != null && Array.isArray(arr) ? arr[i] : 0;
     };
-    const current = labels.map((m) =>
-      pick(detail.charts?.insurance, m) + pick(detail.charts?.selfPay, m) + pick(detail.charts?.products, m),
-    );
+    const current = labels.map((m, mi) => {
+      if (mi + 1 > asOfMonth) return 0;
+      return pick(detail.charts?.insurance, m) + pick(detail.charts?.selfPay, m) + pick(detail.charts?.products, m);
+    });
     const compare = labels.map((m) => pick(detail.charts?.compareRevenue, m));
     return {
       title: '前年同月比',
@@ -1280,15 +1288,37 @@ function getInsightPageData(pageId, period = '本日', metricsContext = null) {
           values: weekdayVals,
           color: '#06b6d4',
         }),
-        withChartAxis({
-          title: '前年比較',
-          subtitle: '患者数の季節変動',
-          type: 'compare-line',
-          labels: detail.charts?.labels?.slice(-5) || [],
-          current: detail.charts?.visits?.slice(-5) || [],
-          compare: detail.charts?.compareVisits?.slice(-5) || [],
-          compareLabel: '前年',
-        }),
+        withChartAxis((() => {
+          if (period === '今月') {
+            const asOfMonth = resolveInsightAsOfMonth(detail);
+            const labels = Array.from({ length: 12 }, (_, i) => `${i + 1}月`);
+            const idx = new Map((detail.charts?.labels || []).map((l, i) => [String(l), i]));
+            const pick = (arr, label) => {
+              const i = idx.get(label);
+              return i != null && Array.isArray(arr) ? (arr[i] || 0) : 0;
+            };
+            return {
+              title: '前年比較',
+              subtitle: `患者数の季節変動（2026年1〜${asOfMonth}月・6/23時点）`,
+              type: 'compare-line',
+              labels,
+              current: labels.map((m, mi) => (mi + 1 > asOfMonth ? 0 : pick(detail.charts?.visits, m))),
+              compare: labels.map((m) => pick(detail.charts?.compareVisits, m)),
+              compareLabel: '前年同月',
+              focusIndex: asOfMonth - 1,
+              focusLabel: '今月',
+            };
+          }
+          return {
+            title: '前年比較',
+            subtitle: '患者数の季節変動',
+            type: 'compare-line',
+            labels: detail.charts?.labels?.slice(-5) || [],
+            current: detail.charts?.visits?.slice(-5) || [],
+            compare: detail.charts?.compareVisits?.slice(-5) || [],
+            compareLabel: '前年',
+          };
+        })()),
       ],
     };
     },
@@ -1297,27 +1327,18 @@ function getInsightPageData(pageId, period = '本日', metricsContext = null) {
         ? getAppointments(detail)
         : { total: detail.visits, breakdown: { visited: detail.visits, notVisited: 0, cancelSameDay: 0, cancelAdvance: 0, noShow: 0, cancelled: 0 } };
       const ab = appt.breakdown;
-      const cancelTotal = (ab.cancelSameDay || 0) + (ab.cancelAdvance || 0) + (ab.noShow || 0);
       const pct = (v) => (appt.total > 0 ? Math.round((v / appt.total) * 1000) / 10 : 0);
       const slotVals = typeof distributeByPattern === 'function'
         ? distributeByPattern(appt.total, [4, 8, 6, 5, 7, 4])
         : [4, 8, 6, 5, 7, 4];
-      const cancelRate = pct(cancelTotal);
       const segments = [
         { label: '来院済', value: ab.visited, color: '#10b981', rateMuted: true },
         { label: '未来院', value: ab.notVisited, color: '#0ea5e9', rateMuted: true },
-        {
-          label: 'キャンセル',
-          value: cancelTotal,
-          color: '#f59e0b',
-          rateMuted: true,
-          nestedInline: [
-            { label: '当日', value: ab.cancelSameDay || 0, rate: pct(ab.cancelSameDay || 0), color: '#eab308' },
-            { label: '前日以降', value: ab.cancelAdvance || 0, rate: pct(ab.cancelAdvance || 0), color: '#f59e0b' },
-            { label: '無断', value: ab.noShow || 0, rate: pct(ab.noShow || 0), color: '#ef4444' },
-          ],
-        },
+        { label: '当日キャンセル', value: ab.cancelSameDay || 0, color: '#eab308', rateMuted: true },
+        { label: '前日以降キャンセル', value: ab.cancelAdvance || 0, color: '#f59e0b', rateMuted: true },
+        { label: '無断キャンセル', value: ab.noShow || 0, color: '#ef4444', rateMuted: true },
       ];
+      const cancelRate = pct((ab.cancelSameDay || 0) + (ab.cancelAdvance || 0) + (ab.noShow || 0));
       return {
       kpis: buildCompositeKpi({
         accent: '#0891b2',

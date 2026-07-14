@@ -9,7 +9,7 @@
  * - getOperatingCapacitySnapshot（枠数ヒント suggestedSlots 付き）
  *
  * 永続データ形（localStorage dentalClinicHolidays）:
- * { specialClosed[], specialOpen[], versions[{ id, effectiveFrom, note, weeklyClosed, schedule }] }
+ * { specialClosed[], specialOpen[], specialOpenHours{ dateKey: hours }, versions[...] }
  */
 
 const CALENDAR_YEAR_DEFAULT = 2026;
@@ -211,6 +211,7 @@ function createDefaultClinicCalendarSettings(clinicId) {
   return {
     specialClosed: getDefaultClinicHolidayKeys(clinicId),
     specialOpen: [],
+    specialOpenHours: {},
     versions: [
       normalizeScheduleVersion({
         id: 'ver-default',
@@ -221,6 +222,45 @@ function createDefaultClinicCalendarSettings(clinicId) {
       }),
     ],
   };
+}
+
+function normalizeSpecialOpenHoursRow(raw) {
+  return {
+    openStart: String(raw?.openStart || '09:00'),
+    openEnd: String(raw?.openEnd || '18:30'),
+    breakStart: String(raw?.breakStart || '13:00'),
+    breakEnd: String(raw?.breakEnd || '14:30'),
+    closed: false,
+  };
+}
+
+function normalizeSpecialOpenHoursMap(raw, specialOpenKeys = []) {
+  const next = {};
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const keys = new Set([
+    ...specialOpenKeys.map(String),
+    ...Object.keys(src),
+  ]);
+  keys.forEach((key) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return;
+    if (src[key]) next[key] = normalizeSpecialOpenHoursRow(src[key]);
+  });
+  return next;
+}
+
+function getDefaultOpenHoursFromSchedule(snap) {
+  const row = resolveFallbackOpenScheduleRow(snap);
+  return normalizeSpecialOpenHoursRow(row);
+}
+
+function getSpecialOpenHoursForDate(clinicId, year, month, day) {
+  const key = toDateKey(year, month, day);
+  const settings = getClinicCalendarSettings(clinicId);
+  if (!settings.specialOpen.includes(key)) return null;
+  if (settings.specialOpenHours?.[key]) {
+    return normalizeSpecialOpenHoursRow(settings.specialOpenHours[key]);
+  }
+  return getDefaultOpenHoursFromSchedule(getScheduleForDate(clinicId, year, month, day));
 }
 
 function normalizeClinicCalendarSettings(raw, clinicId) {
@@ -248,9 +288,11 @@ function normalizeClinicCalendarSettings(raw, clinicId) {
 
   versions.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
 
+  const specialOpen = [...new Set((raw.specialOpen || []).map(String))].sort();
   return {
     specialClosed: [...new Set((raw.specialClosed || []).map(String))].sort(),
-    specialOpen: [...new Set((raw.specialOpen || []).map(String))].sort(),
+    specialOpen,
+    specialOpenHours: normalizeSpecialOpenHoursMap(raw.specialOpenHours, specialOpen),
     versions,
   };
 }
@@ -451,27 +493,33 @@ function deleteScheduleVersion(clinicId, versionId) {
   return true;
 }
 
-function cycleClinicSpecialDay(clinicId, year, month, day) {
-  const settings = getClinicCalendarSettings(clinicId);
+function cycleClinicSpecialDay(clinicId, year, month, day, hours = null) {
+  const settings = getClinicCalendarSettings(clinicId, { persisted: true });
   const key = toDateKey(year, month, day);
   const weekday = getWeekday(year, month, day);
   const weeklyClosed = getScheduleForDate(clinicId, year, month, day).weeklyClosed.includes(weekday);
   const closedSet = new Set(settings.specialClosed);
   const openSet = new Set(settings.specialOpen);
+  const openHours = { ...(settings.specialOpenHours || {}) };
 
   if (closedSet.has(key)) {
     closedSet.delete(key);
   } else if (openSet.has(key)) {
     openSet.delete(key);
+    delete openHours[key];
   } else if (weeklyClosed) {
+    if (!hours) return false;
     openSet.add(key);
+    openHours[key] = normalizeSpecialOpenHoursRow(hours);
   } else {
     closedSet.add(key);
   }
 
   settings.specialClosed = [...closedSet].sort();
   settings.specialOpen = [...openSet].sort();
+  settings.specialOpenHours = normalizeSpecialOpenHoursMap(openHours, settings.specialOpen);
   setClinicCalendarSettings(clinicId, settings);
+  return true;
 }
 
 function resolveChartDateContext(options = {}) {
@@ -579,11 +627,16 @@ function getOperatingDayInfo(clinicId, year, month, day) {
 
   let operatingMinutes = 0;
   if (isOperating) {
-    const row = snap.schedule?.[weekday];
-    if (row && !row.closed) {
-      operatingMinutes = calcOpenMinutesForWeekday(row);
-    } else if (isSpecialOpen) {
-      operatingMinutes = calcOpenMinutesForWeekday(resolveFallbackOpenScheduleRow(snap));
+    if (isSpecialOpen) {
+      const hours = settings.specialOpenHours?.[key]
+        ? normalizeSpecialOpenHoursRow(settings.specialOpenHours[key])
+        : getDefaultOpenHoursFromSchedule(snap);
+      operatingMinutes = calcOpenMinutesForWeekday(hours);
+    } else {
+      const row = snap.schedule?.[weekday];
+      if (row && !row.closed) {
+        operatingMinutes = calcOpenMinutesForWeekday(row);
+      }
     }
   }
 

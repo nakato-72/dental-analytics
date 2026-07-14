@@ -109,6 +109,233 @@ const PERIOD_REVENUE_GOALS = {
   今年: 33900000,
 };
 
+const CLINIC_GOALS_STORAGE_KEY = 'clinicMonthlyGoals';
+const DEFAULT_CLINIC_MONTHLY_GOALS = {
+  // 患者（実人数）
+  monthlyNewPatients: 50,
+  monthlyRevisitPatients: 950,
+  monthlyPatients: 1000,
+  monthlyVisitCount: 1200,
+  monthlySelfPayPatients: 400,
+  // 売上（月間）
+  monthlyRevenue: PERIOD_REVENUE_GOALS['今月'],
+  monthlySelfPayRevenue: 2394000,
+  // 予約
+  monthlyCancelCount: 30,
+  monthlyCancelRatePct: 3.5,
+  monthlyNoShowCount: 5,
+  monthlyBookingFillRatePct: 82,
+  // 定着
+  monthlyRecallRatePct: 75,
+  monthlyNextApptRatePct: 70,
+  monthlyTreatmentDropoutRatePct: 8,
+};
+
+function toGoalNonNegInt(value, fallback = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.round(n));
+}
+
+function toGoalNonNegNumber(value, fallback = 0, decimals = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const factor = 10 ** decimals;
+  return Math.max(0, Math.round(n * factor) / factor);
+}
+
+function deriveClinicGoalTotals(partial = {}) {
+  const monthlyPatients = toGoalNonNegInt(
+    partial.monthlyPatients,
+    DEFAULT_CLINIC_MONTHLY_GOALS.monthlyPatients
+  );
+  let monthlyNewPatients = toGoalNonNegInt(
+    partial.monthlyNewPatients,
+    DEFAULT_CLINIC_MONTHLY_GOALS.monthlyNewPatients
+  );
+  monthlyNewPatients = Math.min(monthlyNewPatients, monthlyPatients);
+  const monthlyRevisitPatients = Math.max(0, monthlyPatients - monthlyNewPatients);
+  const monthlyVisitCount = toGoalNonNegInt(
+    partial.monthlyVisitCount,
+    DEFAULT_CLINIC_MONTHLY_GOALS.monthlyVisitCount
+  );
+  let monthlySelfPayPatients = toGoalNonNegInt(
+    partial.monthlySelfPayPatients,
+    DEFAULT_CLINIC_MONTHLY_GOALS.monthlySelfPayPatients
+  );
+  monthlySelfPayPatients = Math.min(monthlySelfPayPatients, monthlyPatients);
+
+  /**
+   * 売上の計算式（月間）
+   * 入力: 月間売上目標 / 自費売上（月間）
+   * 1. 保険売上             = 月間売上目標 − 自費売上
+   * 2. 保険単価１人あたり   = 保険売上 ÷ 目標患者数
+   * 3. 自費単価１人あたり   = 自費売上 ÷ 自費患者数
+   * 4. 必要保険点数         = 保険単価１人あたり ÷ 10（1点=10円）
+   */
+  const monthlyRevenue = toGoalNonNegInt(
+    partial.monthlyRevenue,
+    DEFAULT_CLINIC_MONTHLY_GOALS.monthlyRevenue
+  );
+  let monthlySelfPayRevenue = toGoalNonNegInt(
+    partial.monthlySelfPayRevenue,
+    DEFAULT_CLINIC_MONTHLY_GOALS.monthlySelfPayRevenue
+  );
+  monthlySelfPayRevenue = Math.min(monthlySelfPayRevenue, monthlyRevenue);
+
+  const monthlyInsuranceRevenue = Math.max(0, monthlyRevenue - monthlySelfPayRevenue);
+  const insuranceRevenuePerPatient = monthlyPatients > 0
+    ? Math.round(monthlyInsuranceRevenue / monthlyPatients)
+    : 0;
+  const selfPayPerPatient = monthlySelfPayPatients > 0
+    ? Math.round(monthlySelfPayRevenue / monthlySelfPayPatients)
+    : 0;
+  const insurancePointsPerPatient = Math.round((insuranceRevenuePerPatient / 10) * 10) / 10;
+  const unitPrice = monthlyPatients > 0
+    ? Math.round(monthlyRevenue / monthlyPatients)
+    : 0;
+
+  return {
+    monthlyNewPatients,
+    monthlyRevisitPatients,
+    monthlyPatients,
+    monthlyVisitCount,
+    monthlySelfPayPatients,
+    monthlyRevenue,
+    monthlySelfPayRevenue,
+    monthlyInsuranceRevenue,
+    insuranceRevenuePerPatient,
+    selfPayPerPatient,
+    insurancePointsPerPatient,
+    unitPrice,
+    monthlyCancelCount: toGoalNonNegInt(
+      partial.monthlyCancelCount,
+      DEFAULT_CLINIC_MONTHLY_GOALS.monthlyCancelCount
+    ),
+    monthlyCancelRatePct: toGoalNonNegNumber(
+      partial.monthlyCancelRatePct,
+      DEFAULT_CLINIC_MONTHLY_GOALS.monthlyCancelRatePct,
+      1
+    ),
+    monthlyNoShowCount: toGoalNonNegInt(
+      partial.monthlyNoShowCount,
+      DEFAULT_CLINIC_MONTHLY_GOALS.monthlyNoShowCount
+    ),
+    monthlyBookingFillRatePct: toGoalNonNegNumber(
+      partial.monthlyBookingFillRatePct,
+      DEFAULT_CLINIC_MONTHLY_GOALS.monthlyBookingFillRatePct,
+      1
+    ),
+    monthlyRecallRatePct: toGoalNonNegNumber(
+      partial.monthlyRecallRatePct,
+      DEFAULT_CLINIC_MONTHLY_GOALS.monthlyRecallRatePct,
+      1
+    ),
+    monthlyNextApptRatePct: toGoalNonNegNumber(
+      partial.monthlyNextApptRatePct,
+      DEFAULT_CLINIC_MONTHLY_GOALS.monthlyNextApptRatePct,
+      1
+    ),
+    monthlyTreatmentDropoutRatePct: toGoalNonNegNumber(
+      partial.monthlyTreatmentDropoutRatePct,
+      DEFAULT_CLINIC_MONTHLY_GOALS.monthlyTreatmentDropoutRatePct,
+      1
+    ),
+  };
+}
+
+function normalizeClinicGoals(raw = {}) {
+  const hasLegacyPatients = Number.isFinite(Number(raw.monthlyPatients)) && Number(raw.monthlyPatients) > 0
+    && !Number.isFinite(Number(raw.monthlyNewPatients))
+    && !Number.isFinite(Number(raw.monthlyRevisitPatients));
+
+  let seed = { ...raw };
+
+  if (hasLegacyPatients) {
+    const patients = toGoalNonNegInt(raw.monthlyPatients, DEFAULT_CLINIC_MONTHLY_GOALS.monthlyPatients);
+    const newPatients = Math.min(
+      patients,
+      toGoalNonNegInt(raw.monthlyNewPatients, DEFAULT_CLINIC_MONTHLY_GOALS.monthlyNewPatients)
+    );
+    seed.monthlyNewPatients = newPatients;
+    seed.monthlyRevisitPatients = Math.max(0, patients - newPatients);
+  }
+
+  // 旧「自費1人あたり」→ 月間自費へ換算
+  const hasMonthlySelfPay = Number.isFinite(Number(raw.monthlySelfPayRevenue));
+  const hasLegacySelfPayPerPatient = Number.isFinite(Number(raw.selfPayPerPatient)) && !hasMonthlySelfPay;
+  if (hasLegacySelfPayPerPatient) {
+    const patients = toGoalNonNegInt(
+      seed.monthlyPatients ?? raw.monthlyPatients,
+      DEFAULT_CLINIC_MONTHLY_GOALS.monthlyPatients
+    );
+    const per = toGoalNonNegInt(raw.selfPayPerPatient, 0);
+    seed.monthlySelfPayRevenue = per * Math.max(patients, 1);
+    if (!Number.isFinite(Number(raw.monthlySelfPayPatients))) {
+      seed.monthlySelfPayPatients = patients;
+    }
+  }
+
+  if (!Number.isFinite(Number(seed.monthlySelfPayPatients)) && !Number.isFinite(Number(raw.monthlySelfPayPatients))) {
+    const patients = toGoalNonNegInt(
+      seed.monthlyPatients ?? raw.monthlyPatients,
+      DEFAULT_CLINIC_MONTHLY_GOALS.monthlyPatients
+    );
+    seed.monthlySelfPayPatients = patients;
+  }
+
+  return deriveClinicGoalTotals({ ...DEFAULT_CLINIC_MONTHLY_GOALS, ...seed });
+}
+
+function getClinicGoals(clinicId = 'clinic-sakura') {
+  try {
+    const all = JSON.parse(localStorage.getItem(CLINIC_GOALS_STORAGE_KEY) || '{}');
+    return normalizeClinicGoals(all[clinicId] || {});
+  } catch {
+    return normalizeClinicGoals({});
+  }
+}
+
+function saveClinicGoals(clinicId, goals) {
+  const id = clinicId || 'clinic-sakura';
+  const next = normalizeClinicGoals(goals || {});
+  const persisted = {
+    monthlyNewPatients: next.monthlyNewPatients,
+    monthlyRevisitPatients: next.monthlyRevisitPatients,
+    monthlyVisitCount: next.monthlyVisitCount,
+    monthlySelfPayPatients: next.monthlySelfPayPatients,
+    monthlySelfPayRevenue: next.monthlySelfPayRevenue,
+    monthlyCancelCount: next.monthlyCancelCount,
+    monthlyCancelRatePct: next.monthlyCancelRatePct,
+    monthlyNoShowCount: next.monthlyNoShowCount,
+    monthlyBookingFillRatePct: next.monthlyBookingFillRatePct,
+    monthlyRecallRatePct: next.monthlyRecallRatePct,
+    monthlyNextApptRatePct: next.monthlyNextApptRatePct,
+    monthlyTreatmentDropoutRatePct: next.monthlyTreatmentDropoutRatePct,
+    monthlyPatients: next.monthlyPatients,
+    monthlyRevenue: next.monthlyRevenue,
+  };
+  try {
+    const all = JSON.parse(localStorage.getItem(CLINIC_GOALS_STORAGE_KEY) || '{}');
+    all[id] = persisted;
+    localStorage.setItem(CLINIC_GOALS_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    /* ignore */
+  }
+  return next;
+}
+
+function getPeriodRevenueGoal(periodKey, entityKey = 'clinic-sakura') {
+  if (periodKey === '今月') {
+    return getClinicGoals(entityKey).monthlyRevenue;
+  }
+  return PERIOD_REVENUE_GOALS[periodKey] || 0;
+}
+
+function getMonthlyPatientGoal(entityKey = 'clinic-sakura') {
+  return getClinicGoals(entityKey).monthlyPatients;
+}
+
 function getClinicIds() {
   return getClinics().map((c) => c.id);
 }
@@ -1490,6 +1717,8 @@ function getPopoverSegmentCount(type, detail, pageId, segmentLabel) {
   const counts = {
     insightApptVisited: appt.breakdown.visited,
     insightApptCancel: appt.breakdown.cancelled,
+    insightApptCancelSameDay: appt.breakdown.cancelSameDay,
+    insightApptCancelAdvance: appt.breakdown.cancelAdvance,
     insightApptNoShow: appt.breakdown.noShow,
     insightApptPending: appt.breakdown.notVisited,
     insightVisitPureFirst: out.pureFirst + vis.breakdown.pureFirst,
@@ -1639,29 +1868,63 @@ function scalePopoverRowsToAmount(templates, type, targetAmount, detail) {
   return templates.map((r, i) => ({ ...r, [amountKey]: formatPopoverYen(scaled[i]) }));
 }
 
-function buildAppointmentCancelPopoverRows(detail, cancelTemplates, noShowTemplates) {
+function formatPopoverMockDate(y, m, d) {
+  return `${y}/${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}`;
+}
+
+function resolvePopoverAnchorDate(detail) {
+  const sub = String(detail?.subtitle || MOCK_DATA?.periodDetails?.['本日']?.subtitle || '');
+  const m = sub.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+  if (m) return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
+  const m2 = sub.match(/(\d{4})年(\d{1,2})月/);
+  if (m2) return { y: Number(m2[1]), m: Number(m2[2]), d: 23 };
+  return { y: 2026, m: 6, d: 23 };
+}
+
+function buildAppointmentCancelPopoverRows(detail, cancelTemplates, noShowTemplates, filter = null) {
   const appt = typeof getAppointments === 'function' ? getAppointments(detail) : null;
   if (!appt?.breakdown) return [];
   const b = appt.breakdown;
-  const sameDayTpl = cancelTemplates.find((t) => t.cancelType === '当日') || cancelTemplates[0];
+  const sameDayTpl = cancelTemplates.find((t) => /当日/.test(t.cancelType || '')) || cancelTemplates[0];
   const advanceTpl = cancelTemplates.find((t) => /前日/.test(t.cancelType || '')) || cancelTemplates[1] || cancelTemplates[0];
   const noShowTpl = noShowTemplates[0] || {};
+  const anchor = resolvePopoverAnchorDate(detail);
+  const apptDate = formatPopoverMockDate(anchor.y, anchor.m, anchor.d);
   const rows = [];
 
-  for (let i = 0; i < (b.cancelSameDay || 0); i++) {
-    rows.push({ ...sameDayTpl, cancelType: '当日' });
+  if (!filter || filter === '当日' || filter === '当日キャンセル') {
+    for (let i = 0; i < (b.cancelSameDay || 0); i++) {
+      rows.push({
+        ...sameDayTpl,
+        cancelType: '当日キャンセル',
+        cancelDate: apptDate,
+        apptDate,
+      });
+    }
   }
-  for (let i = 0; i < (b.cancelAdvance || 0); i++) {
-    rows.push({ ...advanceTpl, cancelType: '前日以降' });
+  if (!filter || filter === '前日以降' || filter === '前日以降キャンセル') {
+    for (let i = 0; i < (b.cancelAdvance || 0); i++) {
+      const day = Math.max(1, anchor.d - 2 - (i % 3));
+      rows.push({
+        ...advanceTpl,
+        cancelType: '前日以降キャンセル',
+        cancelDate: formatPopoverMockDate(anchor.y, anchor.m, day),
+        apptDate,
+      });
+    }
   }
-  for (let i = 0; i < (b.noShow || 0); i++) {
-    const tpl = noShowTemplates[i % Math.max(noShowTemplates.length, 1)] || noShowTpl;
-    rows.push({
-      cancelType: '無断',
-      chartNo: tpl.chartNo || '—',
-      name: tpl.name || '—',
-      time: tpl.time || '—',
-    });
+  if (!filter || filter === '無断' || filter === '無断キャンセル') {
+    for (let i = 0; i < (b.noShow || 0); i++) {
+      const tpl = noShowTemplates[i % Math.max(noShowTemplates.length, 1)] || noShowTpl;
+      rows.push({
+        cancelType: '無断キャンセル',
+        cancelDate: apptDate,
+        chartNo: tpl.chartNo || '—',
+        name: tpl.name || '—',
+        time: tpl.time || '—',
+        apptDate,
+      });
+    }
   }
   return rows;
 }
@@ -1682,11 +1945,20 @@ function buildInsightPopoverRows(type, templates, detail, options = {}) {
     if (staffRows?.length) return staffRows;
   }
 
-  if (resolvedType === 'insightApptCancel' && detail) {
+  if (
+    (resolvedType === 'insightApptCancel'
+      || resolvedType === 'insightApptCancelSameDay'
+      || resolvedType === 'insightApptCancelAdvance'
+      || resolvedType === 'insightApptNoShow')
+    && detail
+  ) {
+    const cancelTemplates = (typeof INSIGHT_POPOVER_ROWS !== 'undefined' && INSIGHT_POPOVER_ROWS.insightApptCancel)
+      ? INSIGHT_POPOVER_ROWS.insightApptCancel
+      : templates;
     const noShowTemplates = (typeof INSIGHT_POPOVER_ROWS !== 'undefined' && INSIGHT_POPOVER_ROWS.insightApptNoShow)
       ? INSIGHT_POPOVER_ROWS.insightApptNoShow
       : [];
-    const cancelRows = buildAppointmentCancelPopoverRows(detail, templates, noShowTemplates);
+    const cancelRows = buildAppointmentCancelPopoverRows(detail, cancelTemplates, noShowTemplates);
     if (cancelRows.length) return cancelRows;
   }
 
@@ -2246,7 +2518,7 @@ function derivePeriodCard(periodKey, weight, entityKey = 'clinic-sakura') {
     active: periodKey === '本日',
     visitsCumulative: periodKey === '今月' || periodKey === '今年',
     revenue: {
-      goal: scaleNum(PERIOD_REVENUE_GOALS[periodKey] || 0, weight),
+      goal: scaleNum(getPeriodRevenueGoal(periodKey, entityKey) || 0, weight),
       insurance: b.insurance,
       selfPay: b.selfPay,
       products: b.products,
@@ -2286,6 +2558,10 @@ function getEntityPeriodDetails(entityKey) {
   return periodDetailsCache.get(entityKey);
 }
 
+function clearPeriodDetailsCache() {
+  periodDetailsCache.clear();
+}
+
 function resolvePeriodDetail(periodKey, metricsContext) {
   const ctx = metricsContext || { entityKey: 'clinic-sakura', weight: 1 };
   const details = getEntityPeriodDetails(ctx.entityKey);
@@ -2322,7 +2598,7 @@ function resolveSharedMetrics(metricsContext) {
   base.periods = PERIOD_KEYS.map((pk) => derivePeriodCard(pk, weight, entityKey)).filter(Boolean);
 
   const monthDetail = resolvePeriodDetail('今月', ctx);
-  const monthGoal = scaleNum(PERIOD_REVENUE_GOALS['今月'], weight);
+  const monthGoal = scaleNum(getPeriodRevenueGoal('今月', entityKey), weight);
   base.primary.value = formatYenValue(monthDetail.total);
   base.primary.goal = formatYenValue(monthGoal);
   base.primary.progress = monthGoal > 0
