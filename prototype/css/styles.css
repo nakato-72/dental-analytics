@@ -1627,8 +1627,65 @@ body.nav-drag-active .nav-row__drag-handle {
   margin-bottom: 8px;
 }
 
-.period-card .revenue-goal {
-  margin-bottom: 8px;
+/* Goal line — TOP 目標との差（1行） */
+.goal-line {
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.3;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.goal-line.is-behind {
+  color: #c2410c;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.goal-line.is-ontrack {
+  color: #047857;
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+
+.period-card .goal-line {
+  margin: 6px 0 8px;
+  font-size: 11px;
+  padding: 5px 8px;
+}
+
+/* 下段カード: フッタ左のコンパクト目標行（余白を埋める） */
+.intel-panel-foot .goal-line,
+.goal-line--compact {
+  margin: 0;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.intel-panel-foot--goal {
+  gap: 6px;
+  align-items: center;
+  padding-top: 2px;
+  min-height: 0;
+}
+
+.intel-panel-foot--goal .intel-trend {
+  flex-shrink: 0;
 }
 
 .period-card .revenue-goal--compact-row {
@@ -2117,17 +2174,17 @@ body.period-header-unified.period-toolbar-revealed .period-detail-divider {
 /* Intelligence パネルレイアウト */
 .intel-sections {
   --intel-breakdown-rows: 5;
-  --intel-breakdown-row-h: 22px;
-  --intel-breakdown-gap: 3px;
+  --intel-breakdown-row-h: 18px;
+  --intel-breakdown-gap: 1px;
   --intel-breakdown-h: calc(
     var(--intel-breakdown-rows) * var(--intel-breakdown-row-h)
     + (var(--intel-breakdown-rows) - 1) * var(--intel-breakdown-gap)
   );
-  --intel-card-height: 236px;
-  --intel-mini-chart-size: 72px;
+  --intel-card-height: 164px;
+  --intel-mini-chart-size: 68px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
 }
 
 .intel-block-head {
@@ -2155,12 +2212,12 @@ body.period-header-unified.period-toolbar-revealed .period-detail-divider {
 .intel-panel-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  gap: 10px;
   align-items: stretch;
 }
 
 .intel-panel-grid--primary {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .intel-panel-grid--secondary {
@@ -2262,8 +2319,8 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
 
 .intel-panel {
   display: flex;
-  gap: 10px;
-  padding: 12px 12px 10px;
+  gap: 8px;
+  padding: 8px 10px 6px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2330,12 +2387,12 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
 }
 
 .intel-panel-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
   background: color-mix(in srgb, var(--intel-accent, var(--accent)) 12%, white);
   color: var(--intel-accent, var(--accent-dark));
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   display: flex;
   align-items: center;
@@ -2367,8 +2424,8 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
   align-items: baseline;
   justify-content: space-between;
   gap: 6px;
-  min-height: 28px;
-  margin-bottom: 6px;
+  min-height: 0;
+  margin-bottom: 4px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -2389,12 +2446,12 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
 }
 
 .intel-panel-label {
-  font-size: calc(11px + 3pt);
+  font-size: calc(11px + 2pt);
   font-weight: 600;
   color: var(--text-secondary);
-  line-height: 1.3;
-  margin-bottom: 6px;
-  min-height: 28px;
+  line-height: 1.25;
+  margin-bottom: 4px;
+  min-height: 0;
   flex-shrink: 0;
 }
 
@@ -2528,11 +2585,41 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
   flex-shrink: 0;
 }
 
+.intel-breakdown-layout:has(.intel-mini-bars--baseline) {
+  overflow: visible;
+}
+
+.intel-breakdown-chart:has(.intel-mini-bars--baseline) {
+  overflow: visible;
+}
+
 .intel-mini-bars--vertical {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 5px;
+}
+
+/* 患者数・予約数: 棒グラフ下の基準線（両端を少しはみ出し） */
+.intel-mini-bars--baseline {
+  position: relative;
+  box-sizing: border-box;
+}
+
+.intel-mini-bars--baseline::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  right: -6px;
+  bottom: 0;
+  height: 1.5px;
+  background: #cbd5e1;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.intel-mini-bars--baseline .intel-mini-bar-fill {
+  border-radius: 3px 3px 0 0;
 }
 
 .intel-mini-bar-col {
@@ -2686,8 +2773,8 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
   justify-content: space-between;
   gap: 4px 8px;
   margin-top: auto;
-  padding-top: 6px;
-  min-height: 18px;
+  padding-top: 4px;
+  min-height: 16px;
   flex-shrink: 0;
   position: relative;
   z-index: 1;
@@ -2707,8 +2794,8 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
 }
 
 .intel-panel-progress {
-  margin-top: 6px;
-  height: 4px;
+  margin-top: 4px;
+  height: 3px;
   flex-shrink: 0;
 }
 

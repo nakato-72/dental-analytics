@@ -36,6 +36,8 @@ function buildStaffSalesPanel({ total, dr, dh, unset = null, ...meta }) {
     value: intelFormatYen(totalAmt),
     unit: '',
     staffBreakdown: { dr: drAmt, dh: dhAmt, unset: unsetAmt },
+    sub: meta.sub || '',
+    goalGap: meta.goalGap,
     trend: meta.trend || 'up',
     trendText: meta.trendText || '+3.2%',
     trendLabel: meta.trendLabel || '前日比',
@@ -120,6 +122,7 @@ function buildSalesBreakdownPanel(periodKey, override = {}, periodDetail = null)
     salesTotal: periodTotal,
     revenueBreakdown: { insurance, selfPay, products, other },
     sub: override.sub ?? '',
+    goalGap: override.goalGap,
     trend: override.trend ?? 'down',
     trendText: override.trendText ?? '-1.8%',
     trendLabel: override.trendLabel ?? '前日比',
@@ -141,6 +144,8 @@ function buildUtilizationIntelPanel(periodDetail, override = {}) {
     value: String(rate),
     unit: '%',
     sub: override.sub ?? `目標 82% / 予約枠 ${util.slots}`,
+    tip: override.tip || '',
+    goalGap: override.goalGap,
     trend: override.trend ?? 'up',
     trendText: override.trendText ?? '+2.1pt',
     trendLabel: override.trendLabel ?? '前週比',
@@ -293,7 +298,16 @@ function buildIntelPanels(overrides = {}, periodKey = '本日', metricsContext =
       trendText: s.trendText ?? base.staffSales.trendText,
       trendLabel: s.trendLabel ?? base.staffSales.trendLabel,
       accent: s.accent ?? base.staffSales.accent,
+      sub: s.sub ?? '',
+      goalGap: s.goalGap,
     });
+  } else if (merged.staffSales?.type === 'staffSales' && overrides.staffSales?.goalGap) {
+    merged.staffSales.goalGap = overrides.staffSales.goalGap;
+    if (overrides.staffSales.sub !== undefined) merged.staffSales.sub = overrides.staffSales.sub;
+  }
+  if (merged.unitPrice?.type === 'salesBreakdown' && overrides.unitPrice?.goalGap) {
+    merged.unitPrice.goalGap = overrides.unitPrice.goalGap;
+    if (overrides.unitPrice.sub !== undefined) merged.unitPrice.sub = overrides.unitPrice.sub;
   }
   return orderIntelPanels(merged, periodKey, periodDetail);
 }
@@ -350,6 +364,7 @@ function buildPatientsPanel(periodKey, outpatientOverride = {}, visitingOverride
     unit: '人',
     sub: outpatientOverride.sub || defaultSub,
     progress: outpatientOverride.progress,
+    goalGap: outpatientOverride.goalGap,
     trend: outpatient.trend,
     trendText: outpatient.trendText,
     trendLabel: outpatient.trendLabel,
@@ -547,23 +562,59 @@ const PERIOD_INTEL_OVERRIDES = {
 function getIntelligenceData(periodKey, metricsContext = null) {
   const detail = getActivePeriodDetail(periodKey, metricsContext);
   const entityKey = metricsContext?.entityKey || 'clinic-sakura';
-  const baseOverrides = (entityKey === 'clinic-sakura' || entityKey === 'all')
+  const baseOverrides = (entityKey === 'all' || entityKey === 'clinic-sakura')
     ? { ...(PERIOD_INTEL_OVERRIDES[periodKey] || PERIOD_INTEL_OVERRIDES['本日']) }
     : {};
-  if (periodKey === '今月' && typeof getMonthlyPatientGoal === 'function') {
-    const patientGoal = getMonthlyPatientGoal(entityKey === 'all' ? 'clinic-sakura' : entityKey);
-    const outpatient = detail?.visits || 0;
-    const visiting = detail?.patients?.visiting?.total || 0;
-    const visitTotal = outpatient + visiting;
-    const progress = patientGoal > 0
-      ? Math.min(100, Math.round((visitTotal / patientGoal) * 100))
-      : 0;
+
+  if (typeof resolveDashboardGoalGaps === 'function') {
+    const gaps = resolveDashboardGoalGaps(periodKey, detail, entityKey);
+    const revenueLine = typeof formatGoalGapLine === 'function'
+      ? formatGoalGapLine(gaps.revenue)
+      : '';
+    const patientLine = typeof formatGoalGapLine === 'function'
+      ? formatGoalGapLine({ ...gaps.patients, unit: '人' })
+      : '';
+    const cancelLine = typeof formatGoalGapLine === 'function'
+      ? formatGoalGapLine({ ...gaps.cancel, unit: '件' })
+      : '';
+    const utilLine = typeof formatGoalGapLine === 'function'
+      ? formatGoalGapLine(gaps.utilization)
+      : '';
+
+    baseOverrides.unitPrice = {
+      ...(baseOverrides.unitPrice || {}),
+      goalGap: gaps.revenue,
+      sub: '',
+    };
+    baseOverrides.staffSales = {
+      ...(baseOverrides.staffSales || {}),
+      goalGap: gaps.revenue,
+      sub: '',
+    };
     baseOverrides.visits = {
       ...(baseOverrides.visits || {}),
-      sub: `目標 ${patientGoal.toLocaleString('ja-JP')}人（実人数）`,
-      progress,
+      progress: Math.min(100, Math.round(gaps.patients.attainmentPct)),
+      goalGap: gaps.patients,
+      sub: '',
     };
+    baseOverrides.appointments = {
+      ...(baseOverrides.appointments || {}),
+      goalGap: gaps.cancel,
+      sub: '',
+    };
+    baseOverrides.utilization = {
+      ...(baseOverrides.utilization || {}),
+      goalGap: gaps.utilization,
+      sub: '',
+    };
+
+    // keep line text on goalGap for fallback renderers
+    if (gaps.revenue) gaps.revenue.line = revenueLine;
+    if (gaps.patients) gaps.patients.line = patientLine;
+    if (gaps.cancel) gaps.cancel.line = cancelLine;
+    if (gaps.utilization) gaps.utilization.line = utilLine;
   }
+
   const entityOverrides = typeof buildIntelOverridesForEntity === 'function'
     ? buildIntelOverridesForEntity(entityKey, periodKey, detail)
     : {};

@@ -912,11 +912,31 @@ function formatYen(n) {
   return '¥' + n.toLocaleString('ja-JP');
 }
 
+function renderGoalGapLine(gap, opts = {}) {
+  const line = typeof formatGoalGapLine === 'function' ? formatGoalGapLine(gap, opts) : '';
+  if (!line) return '';
+  const stateClass = gap.needsAttention ? 'is-behind' : 'is-ontrack';
+  const compactClass = opts.compact ? ' goal-line--compact' : '';
+  return `<div class="goal-line${compactClass} ${stateClass}" title="${line}">${line}</div>`;
+}
+
 function renderRevenueGauge(revenue, { compact = false } = {}) {
   const displayCats = MOCK_DATA.revenueCategories.filter(c => (revenue[c.key] || 0) > 0);
   const total = displayCats.reduce((s, c) => s + (revenue[c.key] || 0), 0);
-  const goalPct = Math.min((total / revenue.goal) * 100, 100);
-  const goalClass = goalPct >= 80 ? 'success' : goalPct >= 60 ? 'warning' : 'danger';
+  const goal = revenue.goal || 0;
+  const gap = revenue.gap || (goal > 0
+    ? {
+      actual: total,
+      goal,
+      remaining: Math.max(0, goal - total),
+      attainmentPct: Math.round((total / goal) * 1000) / 10,
+      needsAttention: total < goal,
+      mode: 'higherBetter',
+      format: 'yen',
+      label: '売上目標',
+      tip: '',
+    }
+    : null);
 
   const segments = displayCats.map(c => {
     const amt = revenue[c.key] || 0;
@@ -931,14 +951,7 @@ function renderRevenueGauge(revenue, { compact = false } = {}) {
       `).join('')}
     </div>`;
 
-  const goalHtml = `
-    <div class="revenue-goal${compact ? ' revenue-goal--compact-row' : ''}">
-      <span class="revenue-goal-label">目標 ${formatYen(revenue.goal)}</span>
-      <div class="revenue-goal-bar">
-        <div class="revenue-goal-fill ${goalClass}" style="width:${goalPct}%"></div>
-      </div>
-      <span class="revenue-goal-pct">${(total / revenue.goal * 100).toFixed(1)}%</span>
-    </div>`;
+  const goalHtml = renderGoalGapLine(gap);
 
   if (compact) {
     return `
@@ -1344,11 +1357,12 @@ function renderIntelMiniDonut(segments) {
   return `<div class="intel-mini-donut" style="background:conic-gradient(${gradient})" role="img" aria-hidden="true"></div>`;
 }
 
-function renderIntelMiniBars(segments) {
+function renderIntelMiniBars(segments, opts = {}) {
   const segs = normalizeChartSegments(segments);
   const max = Math.max(...segs.map((s) => s.value), 1);
+  const baselineClass = opts.baseline ? ' intel-mini-bars--baseline' : '';
   return `
-    <div class="intel-mini-bars intel-mini-bars--vertical" role="img" aria-hidden="true">
+    <div class="intel-mini-bars intel-mini-bars--vertical${baselineClass}" role="img" aria-hidden="true">
       ${segs.map((s) => `
         <div class="intel-mini-bar-col">
           <div class="intel-mini-bar-track">
@@ -1409,11 +1423,11 @@ function renderIntelPaymentBreakdown(p) {
   })));
 }
 
-function renderIntelCountBreakdown(items, unit, colors) {
+function renderIntelCountBreakdown(items, unit, colors, opts = {}) {
   const chartHtml = renderIntelMiniBars(items.map((item, i) => ({
     value: item.count,
     color: colors[i % colors.length],
-  })));
+  })), { baseline: opts.baseline });
   const rows = items.map((item) => ({
     label: item.label,
     text: `${item.count}${unit}`,
@@ -1429,7 +1443,7 @@ function renderIntelVisitBreakdown(p) {
     { label: '初診', count: b.first },
     { label: '再診', count: b.return },
     { label: 'その他', count: b.other },
-  ], '人', INTEL_VISIT_COLORS);
+  ], '人', INTEL_VISIT_COLORS, { baseline: true });
 }
 
 function renderIntelAppointmentBreakdown(p) {
@@ -1443,7 +1457,7 @@ function renderIntelAppointmentBreakdown(p) {
     { label: '当日キャンセル', count: b.cancelSameDay || 0 },
     { label: '前日以降キャンセル', count: b.cancelAdvance || 0 },
     { label: '無断キャンセル', count: b.noShow || 0 },
-  ], '件', ['#10b981', '#0ea5e9', '#eab308', '#f59e0b', '#ef4444']);
+  ], '件', ['#10b981', '#0ea5e9', '#eab308', '#f59e0b', '#ef4444'], { baseline: true });
 }
 
 function renderIntelPanelSlot(p, grid, index) {
@@ -1595,10 +1609,15 @@ function renderIntelPanel(p) {
 
   const clickAttrs = `class="${panelClasses.join(' ')}" data-action="open-insight" data-insight-page="${p.id}" data-panel-id="${p.id}" role="button" tabindex="0" style="--intel-accent:${p.accent}"`;
 
-  const showFootSub = (p.type === 'salesBreakdown' && p.sub)
+  const showFootSub = !p.goalGap && (
+    (p.type === 'salesBreakdown' && p.sub)
     || ((p.type === 'visitBreakdown' || p.type === 'appointmentBreakdown') && p.sub)
-    || (!breakdownTypes.includes(p.type) && p.cancelCount == null && p.sub);
+    || (!breakdownTypes.includes(p.type) && p.cancelCount == null && p.sub)
+  );
   const footSub = showFootSub ? `<span class="intel-panel-sub">${p.sub || ''}</span>` : '';
+  /* 目標行はフッタ左へ：上の空白を減らし、下の空きを埋める */
+  const goalLineHtml = p.goalGap ? renderGoalGapLine(p.goalGap, { compact: true }) : '';
+  const gapState = p.goalGap?.needsAttention ? 'is-behind' : (p.goalGap ? 'is-ontrack' : '');
 
   return `
     <div ${clickAttrs}>
@@ -1608,11 +1627,10 @@ function renderIntelPanel(p) {
         <div class="intel-panel-main">
           ${valueHtml}
         </div>
-        <div class="intel-panel-foot">
-          ${footSub}
+        <div class="intel-panel-foot${gapState ? ` intel-panel-foot--goal ${gapState}` : ''}">
+          ${goalLineHtml || footSub}
           ${renderIntelTrend(p)}
         </div>
-        ${renderIntelProgressBar(p)}
       </div>
     </div>`;
 }

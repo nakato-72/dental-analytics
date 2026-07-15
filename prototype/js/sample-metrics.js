@@ -121,9 +121,9 @@ const DEFAULT_CLINIC_MONTHLY_GOALS = {
   monthlyRevenue: PERIOD_REVENUE_GOALS['今月'],
   monthlySelfPayRevenue: 2394000,
   // 予約
-  monthlyCancelCount: 30,
+  monthlyCancelCount: 2,
   monthlyCancelRatePct: 3.5,
-  monthlyNoShowCount: 5,
+  monthlyNoShowCount: 1,
   monthlyBookingFillRatePct: 82,
   // 定着
   monthlyRecallRatePct: 75,
@@ -326,14 +326,220 @@ function saveClinicGoals(clinicId, goals) {
 }
 
 function getPeriodRevenueGoal(periodKey, entityKey = 'clinic-sakura') {
-  if (periodKey === '今月') {
-    return getClinicGoals(entityKey).monthlyRevenue;
+  const clinicId = entityKey === 'all' ? 'clinic-sakura' : entityKey;
+  if (typeof convertMonthlyGoalToPeriod === 'function' && typeof getClinicGoals === 'function') {
+    const monthly = getClinicGoals(clinicId).monthlyRevenue;
+    const ctx = getMetricsAsOfContext(clinicId);
+    return Math.round(convertMonthlyGoalToPeriod(monthly, periodKey, ctx));
   }
   return PERIOD_REVENUE_GOALS[periodKey] || 0;
 }
 
 function getMonthlyPatientGoal(entityKey = 'clinic-sakura') {
-  return getClinicGoals(entityKey).monthlyPatients;
+  return getClinicGoals(entityKey === 'all' ? 'clinic-sakura' : entityKey).monthlyPatients;
+}
+
+/** 分析TOP用の基準日・稼働日コンテキスト */
+function getMetricsAsOfContext(clinicId = 'clinic-sakura') {
+  const year = METRICS_CALENDAR_YEAR;
+  const month = METRICS_CALENDAR_MONTH;
+  const day = typeof parseAnchorDayFromSubtitle === 'function'
+    ? parseAnchorDayFromSubtitle(MOCK_DATA?.periodDetails?.['本日']?.subtitle)
+    : 23;
+  const id = clinicId || 'clinic-sakura';
+  let operatingDaysMonth = 22;
+  if (typeof calcMonthlyOperatingStats === 'function') {
+    const stats = calcMonthlyOperatingStats(id, year, month);
+    if (stats?.operatingDays > 0) operatingDaysMonth = stats.operatingDays;
+  }
+  let operatingDaysYtd = operatingDaysMonth * month;
+  if (typeof calcOperatingStatsInRange === 'function' && typeof toDateKey === 'function') {
+    const ytd = calcOperatingStatsInRange(id, toDateKey(year, 1, 1), toDateKey(year, month, day));
+    if (ytd?.operatingDays > 0) operatingDaysYtd = ytd.operatingDays;
+  }
+  return {
+    clinicId: id,
+    year,
+    month,
+    day,
+    elapsedMonths: month,
+    operatingDaysMonth,
+    operatingDaysYtd,
+  };
+}
+
+/** 月間基準目標 → 期間タブ目標 */
+function convertMonthlyGoalToPeriod(monthlyValue, periodKey, ctx) {
+  const m = Math.max(0, Number(monthlyValue) || 0);
+  const days = ctx?.operatingDaysMonth > 0 ? ctx.operatingDaysMonth : 22;
+  if (periodKey === '本日' || periodKey === '前日') {
+    return days > 0 ? Math.round((m / days) * 10) / 10 : 0;
+  }
+  if (periodKey === '今年') {
+    return Math.round(m * (ctx?.elapsedMonths || 1));
+  }
+  return Math.round(m);
+}
+
+/** 日基準目標 → 期間タブ目標 */
+function convertDailyGoalToPeriod(dailyValue, periodKey, ctx) {
+  const d = Math.max(0, Number(dailyValue) || 0);
+  if (periodKey === '本日' || periodKey === '前日') return Math.round(d * 10) / 10;
+  if (periodKey === '今年') {
+    return Math.round(d * (ctx?.operatingDaysYtd || 0));
+  }
+  return Math.round(d * (ctx?.operatingDaysMonth || 22));
+}
+
+/**
+ * 目標ギャップ（higherBetter: 売上・患者・充足率 / lowerBetter: キャンセル件数）
+ * needsAttention のときだけ tip を出す
+ */
+function buildGoalGapSnapshot({
+  actual,
+  goal,
+  mode = 'higherBetter',
+  format = 'number',
+  tip = '',
+  label = '目標',
+}) {
+  const a = Number(actual) || 0;
+  const g = Number(goal) || 0;
+  const delta = Math.round((a - g) * 10) / 10;
+  const attainmentPct = g > 0
+    ? Math.round((a / g) * 1000) / 10
+    : (a > 0 ? 100 : 0);
+  const needsAttention = mode === 'lowerBetter' ? a > g : a < g;
+  const remaining = mode === 'lowerBetter'
+    ? Math.max(0, Math.round((a - g) * 10) / 10)
+    : Math.max(0, Math.round((g - a) * 10) / 10);
+
+  return {
+    actual: a,
+    goal: g,
+    delta,
+    remaining,
+    attainmentPct,
+    needsAttention,
+    mode,
+    format,
+    label,
+    tip: needsAttention ? tip : '',
+  };
+}
+
+function formatGoalGapValue(value, format = 'number') {
+  const n = Number(value) || 0;
+  if (format === 'yen') return `¥${Math.round(n).toLocaleString('ja-JP')}`;
+  if (format === 'pct') {
+    return `${n.toLocaleString('ja-JP', { maximumFractionDigits: 1 })}%`;
+  }
+  if (format === 'count1') {
+    return n.toLocaleString('ja-JP', { maximumFractionDigits: 1 });
+  }
+  return Math.round(n).toLocaleString('ja-JP');
+}
+
+/** TOP用: 目標の1行要約（目標 · 達成率 · あと/超過） */
+function formatGoalGapLine(gap, opts = {}) {
+  if (!gap || !(gap.goal > 0 || gap.actual > 0)) return '';
+  const format = gap.format || 'number';
+  const goalText = formatGoalGapValue(gap.goal, format);
+  const remainText = formatGoalGapValue(gap.remaining, format);
+  const attain = (gap.attainmentPct ?? 0).toLocaleString('ja-JP', { maximumFractionDigits: 1 });
+  const unit = format === 'yen' || format === 'pct' ? '' : (gap.unit || '');
+  const prefix = (gap.label || '目標').replace(/目標$/, '') || '目標';
+
+  if (gap.mode === 'lowerBetter') {
+    const status = gap.needsAttention ? `超過 ${remainText}${unit}` : '目標内';
+    if (opts.compact) {
+      return `${prefix} ${goalText}${unit} · ${status}`;
+    }
+    return `${prefix || '目標'} ${goalText}${unit} · ${attain}% · ${status}`;
+  }
+  const status = gap.needsAttention ? `目標まであと ${remainText}${unit}` : '達成';
+  if (opts.compact) {
+    /* 下段カード向け: 値を短くして切れにくくする */
+    return `${attain}% · ${status}`;
+  }
+  return `目標 ${goalText}${unit} · ${attain}% · ${status}`;
+}
+
+/** TOP向け: 売上・患者・予約のギャップ一式 */
+function resolveDashboardGoalGaps(periodKey, detail, entityKey = 'clinic-sakura') {
+  const clinicId = entityKey === 'all' ? 'clinic-sakura' : (entityKey || 'clinic-sakura');
+  const goals = getClinicGoals(clinicId);
+  const ctx = getMetricsAsOfContext(clinicId);
+  const appt = typeof getAppointments === 'function' ? getAppointments(detail) : null;
+  const cancelActual = (appt?.breakdown?.cancelSameDay || 0)
+    + (appt?.breakdown?.cancelAdvance || 0)
+    + (appt?.breakdown?.noShow || 0);
+  const util = typeof getUtilization === 'function' ? getUtilization(detail) : null;
+  const utilRate = util?.ratePct
+    ?? (typeof getUtilizationRatePct === 'function' ? getUtilizationRatePct(util) : 0);
+  const outpatient = detail?.visits || 0;
+  const visiting = detail?.patients?.visiting?.total || 0;
+  const visitActual = outpatient + visiting;
+
+  const revenueGoal = convertMonthlyGoalToPeriod(goals.monthlyRevenue, periodKey, ctx);
+  const patientGoal = convertMonthlyGoalToPeriod(goals.monthlyPatients, periodKey, ctx);
+  const cancelGoal = convertDailyGoalToPeriod(goals.monthlyCancelCount, periodKey, ctx);
+  const fillGoal = goals.monthlyBookingFillRatePct;
+
+  const revenueRemaining = Math.max(0, Math.round(revenueGoal - (detail?.total || 0)));
+  const patientRemaining = Math.max(0, Math.round(patientGoal - visitActual));
+
+  return {
+    ctx,
+    revenue: buildGoalGapSnapshot({
+      actual: detail?.total || 0,
+      goal: Math.round(revenueGoal),
+      mode: 'higherBetter',
+      format: 'yen',
+      label: '売上目標',
+      tip: revenueRemaining > 0
+        ? `達成まであと ${formatGoalGapValue(revenueRemaining, 'yen')}。患者単価と1日来院のペースを見直しましょう`
+        : '',
+    }),
+    patients: (() => {
+      const snap = buildGoalGapSnapshot({
+        actual: visitActual,
+        goal: Math.round(patientGoal),
+        mode: 'higherBetter',
+        format: 'number',
+        label: '患者目標',
+        tip: patientRemaining > 0
+          ? `目標まであと ${patientRemaining.toLocaleString('ja-JP')}人。新患と再来の着地を確認しましょう`
+          : '',
+      });
+      snap.unit = '人';
+      return snap;
+    })(),
+    cancel: (() => {
+      const snap = buildGoalGapSnapshot({
+        actual: cancelActual,
+        goal: Math.round(cancelGoal),
+        mode: 'lowerBetter',
+        format: 'number',
+        label: 'キャンセル目標',
+        tip: cancelActual > cancelGoal
+          ? 'キャンセルが目標を超えています。当日・無断の内訳から対策を優先しましょう'
+          : '',
+      });
+      snap.unit = '件';
+      return snap;
+    })(),
+    utilization: buildGoalGapSnapshot({
+      actual: utilRate,
+      goal: fillGoal,
+      mode: 'higherBetter',
+      format: 'pct',
+      label: '充足率目標',
+      tip: utilRate < fillGoal
+        ? `充足率があと ${(Math.round((fillGoal - utilRate) * 10) / 10).toLocaleString('ja-JP')}pt。空き枠の多い曜日を埋めましょう`
+        : '',
+    }),
+  };
 }
 
 function getClinicIds() {
@@ -2523,6 +2729,9 @@ function derivePeriodCard(periodKey, weight, entityKey = 'clinic-sakura') {
       selfPay: b.selfPay,
       products: b.products,
       other: b.other || 0,
+      gap: typeof resolveDashboardGoalGaps === 'function'
+        ? resolveDashboardGoalGaps(periodKey, detail, entityKey).revenue
+        : null,
     },
   };
 }
