@@ -1572,12 +1572,16 @@ function renderIntelPanelHeaderValue(p) {
 
 function renderIntelPanelHeader(p) {
   const headerValue = renderIntelPanelHeaderValue(p);
+  const trendHtml = renderIntelTrend(p);
   const valueHtml = headerValue
     ? `<span class="intel-visit-header-value">${headerValue}</span>`
     : '';
+  const metaHtml = (valueHtml || trendHtml)
+    ? `<div class="intel-panel-header-meta">${valueHtml}${trendHtml}</div>`
+    : '';
   return `<div class="intel-panel-label intel-panel-label--split">
     <span class="intel-panel-label-text">${p.label}</span>
-    ${valueHtml}
+    ${metaHtml}
   </div>`;
 }
 
@@ -1618,6 +1622,10 @@ function renderIntelPanel(p) {
   /* 目標行はフッタ左へ：上の空白を減らし、下の空きを埋める */
   const goalLineHtml = p.goalGap ? renderGoalGapLine(p.goalGap, { compact: true }) : '';
   const gapState = p.goalGap?.needsAttention ? 'is-behind' : (p.goalGap ? 'is-ontrack' : '');
+  const footInner = goalLineHtml || footSub;
+  const footHtml = footInner
+    ? `<div class="intel-panel-foot${gapState ? ` intel-panel-foot--goal ${gapState}` : ''}">${footInner}</div>`
+    : '';
 
   return `
     <div ${clickAttrs}>
@@ -1627,10 +1635,7 @@ function renderIntelPanel(p) {
         <div class="intel-panel-main">
           ${valueHtml}
         </div>
-        <div class="intel-panel-foot${gapState ? ` intel-panel-foot--goal ${gapState}` : ''}">
-          ${goalLineHtml || footSub}
-          ${renderIntelTrend(p)}
-        </div>
+        ${footHtml}
       </div>
     </div>`;
 }
@@ -1774,6 +1779,33 @@ function renderIntelDonutMock(periodKey) {
     </ul>`;
 }
 
+function renderPeriodSummary(periodKey) {
+  const periods = typeof getSharedMetrics === 'function'
+    ? (getSharedMetrics().periods || [])
+    : (getViewData()?.periods || []);
+  const card = periods.find((p) => p.label === periodKey);
+  if (!card) return '';
+
+  const changeLabels = { '前日': '前々日比', '本日': '前日比', '今月': '先月同日比', '今年': '前年同日比' };
+  const changeClass = card.changeUp ? 'up' : 'down';
+  const changeArrow = card.changeUp ? '↑' : '↓';
+  const visitsHtml = card.visits != null
+    ? `<span class="period-switcher__visits"><span class="visits-slash">／</span>${card.visits.toLocaleString('ja-JP')}<span class="unit">人</span></span>`
+    : '';
+  const gap = card.revenue?.gap;
+  const goalHtml = gap ? renderGoalGapLine(gap, { compact: false }) : '';
+
+  return `
+    <div class="period-switcher__summary">
+      <div class="period-switcher__kpi">
+        <span class="period-switcher__value">${card.value}</span>
+        ${visitsHtml}
+        <span class="period-switcher__change ${changeClass}">${changeArrow} ${card.change || ''} ${changeLabels[periodKey] || '前比'}</span>
+      </div>
+      ${goalHtml}
+    </div>`;
+}
+
 function renderPeriodDividerTabs() {
   return PERIOD_KEYS.map((p) => `
     <button type="button"
@@ -1789,38 +1821,20 @@ function renderPeriodDetailDivider(periodKey, subtitle) {
     <span class="detail-period-sub">${subtitle}</span><span class="period-detail-divider__suffix">の詳細</span>`;
   const ariaLabel = `${periodKey}${subtitle}の詳細`;
 
-  if (PERIOD_HEADER_MODE === 'unified') {
-    return `
-      <div class="period-detail-divider period-detail-divider--unified" role="separator" aria-label="${ariaLabel}">
-        <div class="period-detail-divider__classic">
-          <span class="period-detail-divider__line" aria-hidden="true"></span>
-          <div class="period-detail-divider__label">
-            <span class="detail-period-badge">${periodKey}</span>
-            <span class="period-detail-divider__title">${dateTitle}</span>
-          </div>
-          <span class="period-detail-divider__line" aria-hidden="true"></span>
-        </div>
-        <div class="period-detail-divider__unified-bar">
+  return `
+    <div class="period-detail-divider period-detail-divider--switcher" role="region" aria-label="${ariaLabel}">
+      <div class="period-switcher">
+        <div class="period-switcher__row">
           <div class="period-detail-divider__tabs" role="tablist" aria-label="表示期間">
             ${renderPeriodDividerTabs()}
           </div>
-          <span class="period-detail-divider__line period-detail-divider__line--bridge" aria-hidden="true"></span>
           <div class="period-detail-divider__label period-detail-divider__label--date">
             <span class="period-detail-divider__title">${dateTitle}</span>
           </div>
         </div>
-      </div>`;
-  }
-
-  return `
-      <div class="period-detail-divider" role="separator" aria-label="${ariaLabel}">
-        <span class="period-detail-divider__line" aria-hidden="true"></span>
-        <div class="period-detail-divider__label">
-          <span class="detail-period-badge">${periodKey}</span>
-          <span class="period-detail-divider__title">${dateTitle}</span>
-        </div>
-        <span class="period-detail-divider__line" aria-hidden="true"></span>
-      </div>`;
+        ${renderPeriodSummary(periodKey)}
+      </div>
+    </div>`;
 }
 
 function renderPeriodDetailSections(periodKey, level) {
@@ -1922,20 +1936,12 @@ function selectPeriod(period) {
 function updatePeriodSelection(period) {
   state.selectedPeriod = period;
 
-  document.querySelectorAll('.period-card[data-period]').forEach((card) => {
-    const isActive = card.dataset.period === period;
-    card.classList.toggle('active', isActive);
-    card.setAttribute('aria-pressed', String(isActive));
-  });
-
-  document.querySelectorAll('.period-tab[data-period]').forEach((tab) => {
-    tab.classList.toggle('active', tab.dataset.period === period);
-  });
-
-  document.querySelectorAll('.period-divider-tab[data-period]').forEach((tab) => {
+  document.querySelectorAll('.period-tab[data-period], .period-divider-tab[data-period]').forEach((tab) => {
     const isActive = tab.dataset.period === period;
     tab.classList.toggle('active', isActive);
-    tab.setAttribute('aria-pressed', String(isActive));
+    if (tab.hasAttribute('aria-pressed')) {
+      tab.setAttribute('aria-pressed', String(isActive));
+    }
   });
 
   const detailRoot = document.getElementById('period-detail-root');
@@ -1943,28 +1949,23 @@ function updatePeriodSelection(period) {
     detailRoot.innerHTML = renderPeriodDetailSections(period, state.level);
     setupPeriodDividerStuckObserver();
   }
-
 }
 
 function renderDashboard() {
   const data = getViewData();
-  const { periods, showPeriodDetail, level } = data;
+  const { showPeriodDetail, level } = data;
 
   document.getElementById('main-content').className = 'content';
 
   const html = `
-    <div class="period-grid">
-      ${renderPeriodCards(periods, state.selectedPeriod, showPeriodDetail)}
-    </div>
-
     <div id="period-detail-root">
       ${showPeriodDetail ? renderPeriodDetailSections(state.selectedPeriod, level) : ''}
     </div>
   `;
 
   document.getElementById('main-content').innerHTML = html;
-  renderPeriodToolbar(showPeriodDetail);
-  if (showPeriodDetail) setupPeriodToolbarObserver();
+  renderPeriodToolbar(false);
+  if (showPeriodDetail) setupPeriodDividerStuckObserver();
 }
 
 function renderMeta() {

@@ -1667,12 +1667,12 @@ body.nav-drag-active .nav-row__drag-handle {
 .intel-panel-foot .goal-line,
 .goal-line--compact {
   margin: 0;
-  padding: 2px 6px;
+  padding: 2px 7px;
   border-radius: 5px;
   font-size: 9.5px;
   font-weight: 700;
-  line-height: 1.25;
-  flex: 1 1 auto;
+  line-height: 1.2;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 100%;
 }
@@ -1682,10 +1682,6 @@ body.nav-drag-active .nav-row__drag-handle {
   align-items: center;
   padding-top: 2px;
   min-height: 0;
-}
-
-.intel-panel-foot--goal .intel-trend {
-  flex-shrink: 0;
 }
 
 .period-card .revenue-goal--compact-row {
@@ -1906,9 +1902,9 @@ body.nav-drag-active .nav-row__drag-handle {
   gap: 16px;
 }
 
-/* 期間カード → 詳細セクションの区切り（案B） */
+/* 期間切替（カード廃止 → タブ＋要約1行） */
 .period-detail-wrap {
-  margin-top: 4px;
+  margin-top: 0;
 }
 
 .period-detail-divider-anchor {
@@ -1922,11 +1918,11 @@ body.nav-drag-active .nav-row__drag-handle {
   display: flex;
   align-items: center;
   gap: 20px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   position: sticky;
   top: 0;
   z-index: 48;
-  padding: 10px 0;
+  padding: 8px 0 10px;
   background: linear-gradient(180deg, var(--bg) 55%, rgba(248, 250, 252, 0.94) 100%);
   transition:
     box-shadow 0.28s ease,
@@ -1950,32 +1946,84 @@ body.period-toolbar-revealed .period-detail-divider {
   box-shadow: 0 4px 18px rgba(15, 23, 42, 0.07);
 }
 
-/* 案1: 区切りラインに期間タブ統合（unified） */
-.period-detail-divider--unified {
+.period-detail-divider--switcher {
   display: block;
 }
 
-.period-detail-divider__classic {
+.period-switcher {
   display: flex;
-  align-items: center;
-  gap: 20px;
-  width: 100%;
-}
-
-.period-detail-divider--unified .period-detail-divider__unified-bar {
-  display: none;
-  align-items: center;
-  gap: 14px;
+  flex-direction: column;
+  gap: 8px;
   width: 100%;
   min-width: 0;
 }
 
-.period-detail-divider--unified.is-stuck .period-detail-divider__classic {
-  display: none;
+.period-switcher__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
 }
 
-.period-detail-divider--unified.is-stuck .period-detail-divider__unified-bar {
+.period-switcher__summary {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  min-width: 0;
+}
+
+.period-switcher__kpi {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.period-switcher__value {
+  font-size: clamp(22px, 3vw, 28px);
+  font-weight: 750;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.period-switcher__visits {
+  font-size: clamp(15px, 2vw, 18px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  line-height: 1.1;
+}
+
+.period-switcher__visits .visits-slash {
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-right: 2px;
+}
+
+.period-switcher__visits .unit {
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: 1px;
+  color: var(--text-muted);
+}
+
+.period-switcher__change {
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.period-switcher__change.up { color: var(--success); }
+.period-switcher__change.down { color: var(--danger); }
+
+.period-switcher .goal-line {
+  margin: 0;
+  max-width: min(420px, 100%);
 }
 
 .period-detail-divider__tabs {
@@ -1986,13 +2034,13 @@ body.period-toolbar-revealed .period-detail-divider {
 }
 
 .period-divider-tab {
-  padding: 6px 13px;
+  padding: 7px 14px;
   border: 1px solid var(--border);
-  border-radius: 20px;
+  border-radius: 999px;
   background: var(--surface);
   font-family: var(--font);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
   color: var(--text-secondary);
   cursor: pointer;
   white-space: nowrap;
@@ -2024,31 +2072,14 @@ body.period-toolbar-revealed .period-detail-divider {
 .period-detail-divider__label--date {
   flex-shrink: 1;
   min-width: 0;
+  margin-left: auto;
 }
 
 .period-detail-divider__label--date .period-detail-divider__title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.period-detail-divider__line--bridge {
-  flex: 1;
-  min-width: 20px;
-  background: linear-gradient(
-    90deg,
-    #0284c7 0%,
-    #0ea5e9 18%,
-    #38bdf8 55%,
-    rgba(186, 230, 253, 0.45) 88%,
-    transparent 100%
-  );
-}
-
-.period-detail-divider__line--bridge::after {
-  right: 0;
-  left: auto;
-  transform: translate(50%, -50%) rotate(45deg);
+  justify-content: flex-end;
 }
 
 body.period-header-unified .period-toolbar.visible {
@@ -2057,80 +2088,6 @@ body.period-header-unified .period-toolbar.visible {
 
 body.period-header-unified.period-toolbar-revealed .period-detail-divider {
   top: 0;
-}
-
-.period-detail-divider__line {
-  flex: 1;
-  position: relative;
-  height: 2px;
-  border: none;
-  border-radius: 2px;
-  box-shadow: 0 1px 10px rgba(14, 165, 233, 0.22);
-}
-
-.period-detail-divider__line:first-of-type {
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(186, 230, 253, 0.35) 12%,
-    #7dd3fc 40%,
-    #38bdf8 72%,
-    #0ea5e9 92%,
-    #0284c7 100%
-  );
-}
-
-.period-detail-divider__line:last-of-type {
-  background: linear-gradient(
-    90deg,
-    #0284c7 0%,
-    #0ea5e9 8%,
-    #38bdf8 28%,
-    #7dd3fc 60%,
-    rgba(186, 230, 253, 0.35) 88%,
-    transparent 100%
-  );
-}
-
-.period-detail-divider__line::before {
-  content: '';
-  position: absolute;
-  inset: -1px 0;
-  border-radius: inherit;
-  background: repeating-linear-gradient(
-    90deg,
-    transparent 0,
-    transparent 18px,
-    rgba(255, 255, 255, 0.55) 18px,
-    rgba(255, 255, 255, 0.55) 20px
-  );
-  opacity: 0.45;
-  pointer-events: none;
-}
-
-.period-detail-divider__line:first-of-type::after,
-.period-detail-divider__line:last-of-type::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  width: 9px;
-  height: 9px;
-  transform: translateY(-50%) rotate(45deg);
-  background: linear-gradient(135deg, #bae6fd 0%, #0ea5e9 45%, #0284c7 100%);
-  border-radius: 2px;
-  box-shadow:
-    0 0 0 3px rgba(224, 242, 254, 0.95),
-    0 0 14px rgba(14, 165, 233, 0.4);
-}
-
-.period-detail-divider__line:first-of-type::after {
-  right: 0;
-  transform: translate(50%, -50%) rotate(45deg);
-}
-
-.period-detail-divider__line:last-of-type::after {
-  left: 0;
-  transform: translate(-50%, -50%) rotate(45deg);
 }
 
 .period-detail-divider__label {
@@ -2150,12 +2107,19 @@ body.period-header-unified.period-toolbar-revealed .period-detail-divider {
 }
 
 .period-detail-divider__suffix {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--text);
   letter-spacing: -0.02em;
   line-height: 1.3;
   white-space: nowrap;
+}
+
+.detail-period-sub {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
 }
 
 .period-detail-panel {
@@ -2174,14 +2138,16 @@ body.period-header-unified.period-toolbar-revealed .period-detail-divider {
 /* Intelligence パネルレイアウト */
 .intel-sections {
   --intel-breakdown-rows: 5;
-  --intel-breakdown-row-h: 18px;
-  --intel-breakdown-gap: 1px;
+  --intel-breakdown-row-h: 26px;
+  --intel-breakdown-gap: 3px;
   --intel-breakdown-h: calc(
     var(--intel-breakdown-rows) * var(--intel-breakdown-row-h)
     + (var(--intel-breakdown-rows) - 1) * var(--intel-breakdown-gap)
   );
-  --intel-card-height: 164px;
-  --intel-mini-chart-size: 68px;
+  --intel-card-height: 210px;
+  --intel-mini-chart-size: 96px;
+  --intel-breakdown-list-w: 158px;
+  --intel-header-value-size: clamp(15px, 2.6vw, 19px);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -2319,8 +2285,8 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
 
 .intel-panel {
   display: flex;
-  gap: 8px;
-  padding: 8px 10px 6px;
+  gap: 7px;
+  padding: 7px 10px 7px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2332,6 +2298,7 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
   box-sizing: border-box;
   position: relative;
   overflow: hidden;
+  align-items: stretch;
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.22s ease, border-color 0.22s ease;
 }
 
@@ -2387,8 +2354,8 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
 }
 
 .intel-panel-icon {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 7px;
   background: color-mix(in srgb, var(--intel-accent, var(--accent)) 12%, white);
   color: var(--intel-accent, var(--accent-dark));
@@ -2398,6 +2365,8 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 1px;
 }
 
 .intel-panel-body {
@@ -2407,37 +2376,41 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
   height: 100%;
   display: flex;
   flex-direction: column;
+  gap: 0;
 }
 
 .intel-panel-main {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
+  justify-content: stretch;
   overflow: hidden;
+  padding: 4px 0 2px;
 }
 
 .intel-panel-label--split {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  min-height: 0;
-  margin-bottom: 4px;
+  gap: 8px;
+  min-height: 22px;
+  margin-bottom: 0;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .intel-panel-label-text {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex: 1 1 auto;
   min-width: 0;
   gap: 4px;
+  line-height: 1.2;
 }
 
 .intel-panel-label-text .intel-panel-hint {
@@ -2449,8 +2422,8 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
   font-size: calc(11px + 2pt);
   font-weight: 600;
   color: var(--text-secondary);
-  line-height: 1.25;
-  margin-bottom: 4px;
+  line-height: 1.2;
+  margin-bottom: 0;
   min-height: 0;
   flex-shrink: 0;
 }
@@ -2496,24 +2469,41 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
   color: var(--text-muted);
 }
 
+.intel-panel-header-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding-right: 24px;
+}
+
 .intel-visit-header-value {
-  font-size: calc(clamp(12px, 2.8vw, 17px) + 2pt);
-  font-weight: 700;
+  font-size: calc(var(--intel-header-value-size) + 2pt);
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
-  line-height: 1.05;
+  letter-spacing: -0.03em;
+  line-height: 1;
   color: var(--text);
   flex: 0 1 auto;
   min-width: 0;
   white-space: nowrap;
-  padding-right: 30px;
+  padding-right: 0;
 }
 
 .intel-visit-header-value .unit {
-  font-size: calc(9px + 2pt);
-  font-weight: 600;
+  font-size: calc(10px + 2pt);
+  font-weight: 700;
   color: var(--text-secondary);
   margin-left: 1px;
+}
+
+.intel-panel-header-meta .intel-trend {
+  flex-shrink: 0;
+  font-size: 9.5px;
+  line-height: 1.15;
+  align-self: center;
 }
 
 .intel-staff-breakdown--rows {
@@ -2522,32 +2512,38 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
   gap: var(--intel-breakdown-gap);
   width: 100%;
   flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
 .intel-staff-breakdown--uniform {
-  min-height: var(--intel-breakdown-h);
+  min-height: 0;
 }
 
 .intel-breakdown-layout {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 8px;
   width: 100%;
+  min-width: 0;
   min-height: 0;
-  max-height: var(--intel-breakdown-h);
-  flex: 1;
+  height: 100%;
+  max-height: none;
+  flex: 1 1 auto;
   overflow: hidden;
 }
 
 .intel-breakdown-layout--uniform {
   min-height: 0;
-  max-height: var(--intel-breakdown-h);
+  max-height: none;
 }
 
 .intel-breakdown-chart {
   flex: 0 0 var(--intel-mini-chart-size);
   width: var(--intel-mini-chart-size);
-  height: var(--intel-breakdown-h);
+  min-width: var(--intel-mini-chart-size);
+  height: 100%;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2556,8 +2552,11 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
 }
 
 .intel-mini-donut {
-  width: var(--intel-mini-chart-size);
-  height: var(--intel-mini-chart-size);
+  width: min(var(--intel-mini-chart-size), 92%);
+  height: min(var(--intel-mini-chart-size), 92%);
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 1;
   border-radius: 50%;
   position: relative;
   flex-shrink: 0;
@@ -2581,8 +2580,11 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
 
 .intel-mini-bars {
   width: var(--intel-mini-chart-size);
-  height: var(--intel-breakdown-h);
+  min-width: var(--intel-mini-chart-size);
+  height: 100%;
+  min-height: 0;
   flex-shrink: 0;
+  max-height: 100%;
 }
 
 .intel-breakdown-layout:has(.intel-mini-bars--baseline) {
@@ -2646,18 +2648,22 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
 }
 
 .intel-staff-breakdown--compact {
-  flex: 0 0 50%;
-  max-width: 50%;
+  flex: 0 0 var(--intel-breakdown-list-w);
+  width: var(--intel-breakdown-list-w);
+  min-width: var(--intel-breakdown-list-w);
+  max-width: var(--intel-breakdown-list-w);
   margin-left: auto;
   min-height: 0;
-  max-height: var(--intel-breakdown-h);
+  height: 100%;
+  max-height: none;
   align-self: stretch;
   justify-content: flex-start;
+  gap: var(--intel-breakdown-gap);
   overflow: hidden;
 }
 
 .intel-staff-breakdown--compact .intel-staff-row-label:not(.intel-staff-row-label--wide) {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2665,17 +2671,31 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
 }
 
 .intel-staff-breakdown--compact .intel-staff-row {
-  padding: 2px 6px;
+  width: 100%;
+  padding: 0 8px;
+  flex: 0 0 var(--intel-breakdown-row-h);
+  height: var(--intel-breakdown-row-h);
   min-height: var(--intel-breakdown-row-h);
+  max-height: var(--intel-breakdown-row-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  box-sizing: border-box;
 }
 
 .intel-staff-breakdown--compact .intel-staff-row-label {
-  font-size: 9px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1.2;
 }
 
 .intel-staff-breakdown--compact .intel-staff-row-amt {
-  flex-shrink: 0;
-  font-size: 10px;
+  flex: 0 0 auto;
+  min-width: 4.8em;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
 }
 
 .intel-breakdown-layout .intel-staff-breakdown--compact {
@@ -2770,11 +2790,11 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 4px 8px;
   margin-top: auto;
-  padding-top: 4px;
-  min-height: 16px;
+  padding-top: 3px;
+  min-height: 0;
   flex-shrink: 0;
   position: relative;
   z-index: 1;
@@ -2787,10 +2807,6 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.intel-panel-foot .intel-trend {
-  flex: 0 0 auto;
 }
 
 .intel-panel-progress {
@@ -3075,7 +3091,7 @@ body.intel-panel-drag-active .intel-panel-slot__drag-handle {
 
 .detail-period-sub,
 .clinic-period-sub {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--text);
   letter-spacing: -0.02em;
